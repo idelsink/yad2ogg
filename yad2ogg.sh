@@ -105,8 +105,8 @@ readonly OGG_LIST=4
 readonly M4A_LIST=5
 
 # directories
-readonly TMP_DIR="/tmp"
-readonly APP_DIR="${TMP_DIR}/${APPNAME}"
+readonly ROOT_DIR="/tmp"
+readonly APP_DIR="${ROOT_DIR}/${APPNAME}"
 readonly LOCKFILE_DIR="${APP_DIR}/lock"
 readonly QUEUE_STORAGE="${APP_DIR}/queue"
 readonly VARIABLE_STORAGE="${APP_DIR}/variable_storage"
@@ -497,12 +497,11 @@ function finish {
 #############################
 # conversion command
 #############################
-# file, other parameters for specific type
-# get te conversion command based on filetype
-# command can be found in the 'conversion_command' variable
 get_conversion_command() {
     # @description returns a conversion command
-    # based on the file type
+    # based on the file type.
+    # the reason for this setup is so that the optimal command(s)
+    # per file type can be selected
     # @param $1 filename of the to converted file
     # @param $2 quality switch (integer)
     # @param $2 extra parameters for the conversion
@@ -522,16 +521,22 @@ get_conversion_command() {
     output_file=${file/$INPUT_DIR/$OUTPUT_DIR}  # change input for output dir
     case $file_type in
         ${SUPORTED_FILETYPES[$WAV_LIST]} )
-            conversion_command="WAV"
+            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
             ;;
         ${SUPORTED_FILETYPES[$FLAC_LIST]} )
-            conversion_command="FLAC"
+            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
+            ;;
+        ${SUPORTED_FILETYPES[$ALAC_LIST]} )
+            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
             ;;
         ${SUPORTED_FILETYPES[$MP3_LIST]} )
-            conversion_command="ffmpeg -i '${file}' -acodec libvorbis -aq ${quality} '${output_file%.*}.ogg'"
+            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
             ;;
         ${SUPORTED_FILETYPES[$OGG_LIST]} )
-            conversion_command="ffmpeg -i '${file}' -acodec libvorbis -aq ${quality} '${output_file%.*}.ogg'"
+            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
+            ;;
+        ${SUPORTED_FILETYPES[$M4A_LIST]} )
+            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
             ;;
         *)
             conversion_command=$ERR_TYPE_NOT_SUPORTED
@@ -541,31 +546,24 @@ get_conversion_command() {
     return 0
 }
 
-# hmm this echo is handy for now, but remove it later.. oke?
-echo "-----------------------"
-#
-# 1. read files to convert
-# 2. startup conversion
-# 2. copy files over
-
-# get file @todo add documentation
+#############################
+# file to convert
+#############################
 function get_file_to_convert() {
+    # @description get a file from the queue
+    # This is using a mutex so that the queue is only read by one process
     local filename=""
     local timeout=5 #seconds
     local retry_timeout=$(bc -l <<< "scale = 2; $timeout/10.0") || true
     local retry_count=0
     local current_timeout=0
-
-    # wait to get mutex, with timeout
-    while true; do
+    while true; do # wait to get mutex, with timeout
         if mutex_lock "${MUTEX_READ_FILES_TO_PROCESS}" ; then
             filename=$(queue_read "${FILES_TO_PROCESS_QUEUE}")
             if [ -z "${filename}" ]; then
                 filename=${ERR_NO_MORE_FILES}
             fi
-            # free the mutex
-            #sleep 2;
-            mutex_free "${MUTEX_READ_FILES_TO_PROCESS}"
+            mutex_free "${MUTEX_READ_FILES_TO_PROCESS}" # free the mutex
             break
         else
             current_timeout=$(bc -l <<< "scale = 2; $retry_timeout*$retry_count") || true
@@ -574,13 +572,15 @@ function get_file_to_convert() {
                 return 0
             fi
             ((retry_count++)) || true
-            sleep $retry_timeout
+            sleep $retry_timeout || true
         fi
     done
     echo "${filename}" # return the filename
 }
 
-# what is this process actually doing?
+#############################
+# converter process
+#############################
 function process_convert() {
     # @description convert files from the queue
     # - get a file from the queue
@@ -614,11 +614,10 @@ function process_convert() {
         fi
         if [ "$file" == "$ERR_NO_MORE_FILES" ]; then
             echo "$PROCESS_PID: no more files left for me"
-            return 0 # stop process
+            break # stop process
         elif [ "$file" == "$ERR_MUTEX_TIMEOUT" ]; then
             echo "$PROCESS_PID: mutex timeout" # retry
         else
-            #echo "$PROCESS_PID: file: '${file}'"
             # get convert command
             convert_command=$(get_conversion_command "${file}" "${QUALITY}") || true
             if [ -z "${convert_command}" ]; then
@@ -636,24 +635,23 @@ function process_convert() {
                     mkdir -p "${file_output_directory}" || true
                 fi
                 # run command
-                eval ${convert_command} "-nostats" "-loglevel 0" "-y" || true
+                eval "${convert_command}" "-nostats" "-loglevel 0" "-y" || true
             fi
         fi
         #sleep 2 || true # for debug is this delay handy
         TERMINATE=$(value_get ${PROCESS_PID}_TERMINATE) || true
         if [ "${TERMINATE}" = true ]; then
-            echo "$(tput setaf 2) process $PROCESS_PID stops now$(tput setaf 9)"
-            return 0;
+            break
         fi
     done
-    echo "end of process"
+    echo "$(tput setaf 2)process $PROCESS_PID stops now$(tput setaf 9)"
     return 0
 }
 
 function ctrl_c() {
     # @description do things when the SIGINT is trapped
     echo "** Trapped CTRL-C"
-    echo "$(tput setaf 3)called terminate, sending stop signal now$(tput setaf 9)"
+    echo "$(tput setaf 3)requested termination, sending signal now$(tput setaf 9)"
 
     processes_signal ${CONVERTER_PROCESSES_QUEUE} 'SIGINT'
 }
@@ -676,5 +674,6 @@ trap 'error ${LINENO}' ERR  # on error, print error
 trap finish EXIT            # on exit, clean up resources
 wait || true                # wait for all child processes to finish
 # when this finishes, it returns 1 so catch that please
+echo "$(tput setaf 5)${APPNAME} is now done$(tput setaf 9)"
 
 # --- done ----------------------------------------------------------
