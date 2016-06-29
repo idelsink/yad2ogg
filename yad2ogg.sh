@@ -35,7 +35,9 @@
 # yad2ogg -i input_folder -o destination --copyfile "cover.jpg"
 #########################################################################
 # global parameters
-set -o nounset # unset values give error
+set -e          # kill script if a command fails
+set -o nounset  # unset values give error
+set -o pipefail # prevents errors in a pipeline from being masked
 
 VERSION=0.0.1
 APPNAME="yad2ogg"
@@ -45,14 +47,17 @@ Usage: command -hVio
 -V --version version
 -i --input input directory
 -o --output destination/output directory
--q quality switch
--j number of concurrent jobs
+-q --quality quality switch
+-p --parameters extra conversion parameters
+-j --jobs number of concurrent jobs
 -c --copyfile 'xx' copy files over from original directory to destination where tracks were converted eg. '*.cue or *.jpg'.
 -m --metadata keep the metadata(tags) from the original files
--w --overwrite over write existing files
+-w --overwrite overwrite existing files
+
 =FILE TYPES=
 types of input files to process
--f file type eg. 'flac or ogg'
+-f --filetypes file type eg. 'flac or ogg'
+-a all supported file types
 Or use these parameters(recommended):
 --WAV
 --FLAC
@@ -61,17 +66,25 @@ Or use these parameters(recommended):
 --OGG
 --M4A
 --ALL
--a all supported file types
 "
 
-PRINT_USAGE(){
+function PRINT_USAGE() {
+    # @description prints the short usage of the script
 	echo "$USAGE"
 }
 
 # --- global variables ----------------------------------------------
-INPUT_DIR='./'  # input directory
-OUTPUT_DIR='./' # output directory
-JOBS=1          # number of concurrent jobs
+INPUT_DIR='./'      # input directory
+OUTPUT_DIR='./'     # output directory
+QUALITY="5"         # the quality for the converter switch
+# "Most users agree -q 5 achieves transparency, if the source is the original or lossless."
+# taken from: http://wiki.hydrogenaud.io/index.php?title=Recommended_Ogg_Vorbis
+PARAMETERS=""       # optional parameters for the converter
+JOBS=1              # number of concurrent jobs (default 1)
+COPY_FILES=()       # files to copy over from the source directory
+KEEP_METADATA=false # keep metadata(tags)
+OVERWRITE_EXISTING=false # overwrite existing files
+FILETYPES=()        # file types to convert
 # file types supported
 readonly SUPORTED_FILETYPES=(
     # lossless
@@ -91,35 +104,31 @@ readonly MP3_LIST=3
 readonly OGG_LIST=4
 readonly M4A_LIST=5
 
-# queues
-readonly FILES_TO_PROCESS_QUEUE="files_to_process"
-readonly FILES_TO_COPY_OVER="files_to_copy_over"
-
-FILETYPES=() # file types wanted
-
-# process queue
-CONVERTER_PROCESSES=() # running converter processes (PIDs)
-KEEP_METADATA=true # keep metadata(tags)
-
 # directories
 readonly TMP_DIR="/tmp"
 readonly APP_DIR="${TMP_DIR}/${APPNAME}"
 readonly LOCKFILE_DIR="${APP_DIR}/lock"
 readonly QUEUE_STORAGE="${APP_DIR}/queue"
-readonly GLOBAL_STORE_DIR="${APP_DIR}/global_store"
+readonly VARIABLE_STORAGE="${APP_DIR}/variable_storage"
+
+# queues
+readonly FILES_TO_PROCESS_QUEUE="files_to_process"
+readonly FILES_TO_COPY_OVER_QUEUE="files_to_copy_over"
+readonly CONVERTER_PROCESSES_QUEUE="converter_processes"
+# mutex names
+readonly MUTEX_READ_FILES_TO_PROCESS="get_convert_file"
 
 # some error codes to use in the file
 readonly ERR_NO_MORE_FILES="no more files"
 readonly ERR_MISSING_PARAMETER="missing parameter"
 readonly ERR_MUTEX_TIMEOUT="mutex timeout"
-readonly ERR_TYPE_NOT_SUPORTED="type not suported"
+readonly ERR_TYPE_NOT_SUPORTED="type not supported"
 
 # --- options processing --------------------------------------------
 if [ $# -eq 0 ] ; then  # nothing past to the script
     PRINT_USAGE
     exit 1;
 fi
-
 for arg in "$@"; do     # transform long options to short ones
     shift
     case "$arg" in
@@ -127,21 +136,27 @@ for arg in "$@"; do     # transform long options to short ones
         "--version") set -- "$@" "-V" ;;
         "--input") set -- "$@" "-i" ;;
         "--output") set -- "$@" "-o" ;;
+        "--quality") set -- "$@" "-q" ;;
+        "--jobs") set -- "$@" "-j" ;;
         "--copyfile") set -- "$@" "-c" ;;
         "--metadata") set -- "$@" "-m" ;;
+        "--overwrite") set -- "$@" "-w" ;;
         # filetypes
+        "--filetypes") set -- "$@" "-f" ;;
+        "--ALL") set -- "$@" "-a" ;;
+        # lossless
         "--WAV") set -- "$@" "-f${SUPORTED_FILETYPES[$WAV_LIST]}" ;;
         "--FLAC") set -- "$@" "-f${SUPORTED_FILETYPES[$FLAC_LIST]}" ;;
         "--ALAC") set -- "$@" "-f${SUPORTED_FILETYPES[$ALAC_LIST]}" ;;
+        # lossy
         "--MP3") set -- "$@" "-f${SUPORTED_FILETYPES[$MP3_LIST]}" ;;
         "--OGG") set -- "$@" "-f${SUPORTED_FILETYPES[$OGG_LIST]}" ;;
         "--M4A") set -- "$@" "-f${SUPORTED_FILETYPES[$M4A_LIST]}" ;;
-        "--ALL") set -- "$@" "-a" ;;
         *) set -- "$@" "$arg"
   esac
 done
 # get options
-while getopts "hVi:o:q:f:j:ac:m" optname
+while getopts "hVi:o:q:j:c:mwf:a" optname
 do
     case "$optname" in
         "h")
@@ -149,43 +164,46 @@ do
             exit 0;
             ;;
         "V")
-            echo "Version $VERSION"
+            echo "${APPNAME} v${VERSION}"
             exit 0;
             ;;
         "i")
-            #echo "Option: $OPTARG"
             INPUT_DIR=$OPTARG
             ;;
         "o")
-            #echo "option output: $OPTARG"
             OUTPUT_DIR=$OPTARG
             ;;
         "q")
-            echo "option quality: $OPTARG"
+            QUALITY=${OPTARG}
+            ;;
+        "p")
+            echo "option extra parameters: $OPTARG"
+            ;;
+        "j")
+            JOBS=$OPTARG
+            echo "option jobs: $JOBS"
+            ;;
+        "c")
+            echo "option copyfile: $OPTARG"
+            ;;
+        "m")
+            echo "option keep metadata"
+            ;;
+        "w")
+            echo "option overwrite existing files"
             ;;
         "f")
             echo "option filetype: '$OPTARG'"
             FILETYPES[${#FILETYPES[@]}]=$OPTARG
-            echo ${FILETYPES[*]}
             ;;
         "a")
             echo "option filetype: (all)"
             FILETYPES=${SUPORTED_FILETYPES[*]}
             echo ${FILETYPES[*]}
             ;;
-        "c")
-            echo "option copyfile: $OPTARG"
-            ;;
-        "m")
-            echo "keep metadata"
-            ;;
-        "j")
-            JOBS=$OPTARG
-            echo "option jobs: $JOBS"
-            ;;
         *)
-            echo "Unknown error while processing options"
-            exit 0;
+            echo "unknown error while processing options"
+            exit 1;
         ;;
     esac
 done
@@ -249,7 +267,7 @@ function queue_add() {
         echo "missing queue name"
         exit 1
     fi
-    local readonly queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
+    local queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
     queue_init $queue_name # make sure that the queue exists
     #echo "queue data: '$queue_data'"
     #echo "queue name: $queue_file"
@@ -266,17 +284,12 @@ function queue_read() {
         echo "missing queue name"
         exit 1
     fi
-    local readonly queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
-    queue_init $queue_name # make sure that the queue exists
-    queue_data=$(head -n 1 "$queue_file") # get first line of file
-    sed -i 1d $queue_file # remove first line of file
+    local queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
+    queue_init "${queue_name}" # make sure that the queue exists
+    queue_data=$(head -n 1 "${queue_file}") || true # get first line of file
+    sed -i 1d $queue_file || true # remove first line of file
     echo $queue_data
 }
-
-# FIX-----------------------------------------------------------------------------------------
-# replace this in the code and remove this
-# make file and dir if not exist
-mkfilep() { mkdir -p "$(dirname "$1")" || return; touch "$1"; }
 
 #############################
 # mutex interface
@@ -285,106 +298,148 @@ mkfilep() { mkdir -p "$(dirname "$1")" || return; touch "$1"; }
 # via a local file system
 # - lock 'mutex name' [returns 1(succeeded) or 0(failed)]
 # - free 'mutex name'
-mutex_lock(){
+function mutex_lock() {
     # @description locks a mutex
     # if no mutex exists, one will be made
     # @param $1 the mutex name
     # @return returns status: true/1(succeeded) or false/0(failed)
     local mutex_name=${1:-}
+    local readonly mutex_name_prefix="mutex_"
     local readonly LOCK_FD=200
     if [ -z "$mutex_name" ]; then
-        return false # missing mutex name
+        return 0 # missing mutex name
     fi
-    local prefix=`basename $0`
-    prefix+="_$mutex_name"
+    #local prefix=`basename $0`
+    #prefix+="_$mutex_name"
     local fd=${2:-$LOCK_FD}
-    local lock_file="${LOCKFILE_DIR}/${prefix}.lock"
+    local mutex_file="${LOCKFILE_DIR}/${mutex_name_prefix}${mutex_name}"
 
     # create lock file
-    mkfilep "$lock_file"
-    eval "exec $fd>$lock_file"
+    mkdir -p "$(dirname "${mutex_file}")" || return 0
+    touch "${mutex_file}"
+    eval "exec $fd>$mutex_file"
 
     # acquier the lock
     flock -n $fd \
         && return 0 \
         || return 1
 }
-mutex_free(){
+function mutex_free() {
     # @description frees a mutex
     # use this when you have the mutex
     # of the to be freed mutex
     # @param $1 the mutex name
     local mutex_name=${1:-}
+    local readonly mutex_name_prefix="mutex_"
     if [ -z "$mutex_name" ]; then
-        return false # missing mutex name
+        return 0 # missing mutex name
     fi
-    local prefix=`basename $0`
-    prefix+="_$mutex_name"
-    local lock_file=$LOCKFILE_DIR/$prefix.lock
-    if [ -e "$lock_file" ]; then
-        rm $lock_file
+    local mutex_file="${LOCKFILE_DIR}/${mutex_name_prefix}${mutex_name}"
+    if [ -e "$mutex_file" ]; then
+        rm $mutex_file
     fi
 }
 
-
-########################################## PARAMETER STORAGE HERE
+#############################
+# start concurrent processes
+#############################
+function processes_start() {
+    # @description start a multiple of concurrent processes and store their PIDs
+    # @param $1 function to start
+    # @param $2 number of times to start this process
+    # @param $3 identifier of these processes (used to make a queue for the PIDs)
+    local function="${1:-}"
+    local jobs=${2:-"1"}
+    local identifier=${3:-"${function}"}
+    local queue_name="processes_pid_${identifier:-"default"}"
+    local pid=""
+    #echo "function: ${function}"
+    #echo "jobs: ${jobs}"
+    #echo "id: ${identifier}"
+    #echo "queue name: ${queue_name}"
+    queue_init "${queue_name}" true
+    if [ ! -z "${function}" ]; then
+        for (( i = 0; i < ${jobs}; i++ )); do
+            $function& # start new process
+            pid=$!
+            queue_add ${queue_name} ${pid} # add pid to queue
+        done
+    fi
+}
+function processes_signal() {
+    # @description send a kill signal to a multiple of concurrent processes
+    # uses a queue file with all the PIDs in a queue
+    # @param $1 identifier of these processes (used to make a queue for the PIDs)
+    # @param $2 signal (a signal used by the `kill` command) eg. SIGKILL, SIGTERM
+    local identifier=${1:-}
+    local signal=${2:-"SIGINT"}
+    local queue_name="processes_pid_${identifier:-"default"}"
+    #pid=""
+    pid=$(queue_read ${queue_name})
+    #echo "pid: ${pid}"
+    while [ ! -z "${pid}" ]; do
+        # check if pid exists
+        if [ -n "$(ps -p $pid -o pid=)" ]; then
+           kill -${signal} $pid
+           echo "signaled process with PID: ${pid}"
+        fi
+        pid=$(queue_read ${queue_name})
+    done
+}
 
 #############################
-# conversion command
+# global value storage
 #############################
-# file, other parameters for specific type
-# get te conversion command based on filetype
-# command can be found in the 'conversion_command' variable
-get_conversion_command() {
-    # @description returns a conversion command
-    # based on the file type
-    # @param $1 filename of the to converted file
-    # @param $2 extra parameters ......... @todo add more
-    if [ -z "$1" ]; then
-        echo "missing file"
+function value_set() {
+    # @description store the value of a variable on the local file system
+    # @param $1 variable name
+    # @param $2 variable value
+    local var_name=${1:-}
+    local var_value=${2:-}
+    local readonly var_name_prefix="variable_"
+    if [ -z "${var_name}" ]; then
+        echo "missing variable name"
+        return 1
+    fi
+    if [ -z "${var_value}" ]; then
+        echo "missing variable value"
+        return 1
+    fi
+    local var_file="${VARIABLE_STORAGE}/${var_name_prefix}${var_name}"
+    # make directory
+    if [ ! -d "${VARIABLE_STORAGE}" ]; then
+        mkdir -p "${VARIABLE_STORAGE}"
+        if [ $? -ne 0 ] ; then
+            echo "could not make the variable value file"
+            exit 1
+        fi
+    fi
+    # make file
+    if [ ! -e "$var_file" ] ; then
+        touch "$var_file"
+    fi
+    if [ ! -w "$var_file" ] ; then
+        echo "cannot write to $var_file"
         exit 1
-    else
-        file=$1
-        type=${file##*.}
     fi
-    if [ -z "$2" ]; then
-        # nothing
-        params=""
-    else
-        params=$2
+    echo "${var_value}" > "${var_file}" # write value in file
+}
+function value_get() {
+    # @description get the value of a variable on the local file system
+    # @param $1 variable name
+    # @return returns the requested variable value via a echo
+    local var_name=${1:-}
+    local var_value=""
+    local readonly var_name_prefix="variable_"
+    if [ -z "${var_name}" ]; then
+        echo "missing variable name"
+        return 1
     fi
-    local output_file=${file/$INPUT_DIR/$OUTPUT_DIR}
-    conversion_output_dir="${output_file%/*}" # directory part of file
-    conversion_command=""
-    #echo "input dir: $INPUT_DIR"
-    #echo "output dir: $OUTPUT_DIR"
-    #echo "Type: $type"
-    #echo "File: $file"
-    #echo "Ouput file: $output_file"
-    #echo "Parameters: $params"
-    case $type in
-        ${SUPORTED_FILETYPES[$WAV_LIST]} )
-            #echo "conversion of 'wav'"
-            conversion_command="WAV"
-            ;;
-        ${SUPORTED_FILETYPES[$FLAC_LIST]} )
-            #echo "conversion of 'flac'"
-            conversion_command="FLAC"
-            ;;
-        ${SUPORTED_FILETYPES[$MP3_LIST]} )
-            #echo "conversion of 'mp3'"
-            conversion_command="ffmpeg -i '$file' -acodec libvorbis -aq 3 '${output_file%.*}.ogg'"
-            ;;
-        ${SUPORTED_FILETYPES[$OGG_LIST]} )
-            #echo "conversion of 'ogg'"
-            conversion_command="OGG"
-            ;;
-        *)
-            #echo "filetype not supported"
-            conversion_command=$ERR_TYPE_NOT_SUPORTED
-            ;;
-    esac
-    return 0
+    local var_file="${VARIABLE_STORAGE}/${var_name_prefix}${var_name}"
+    if [ -e "${var_file}" ]; then
+        var_value=$(<${var_file})
+    fi
+    echo ${var_value}
 }
 
 #############################
@@ -402,17 +457,88 @@ function find_files() {
     local filename=${2:-}
     local filetypes=${3:-}
     local queue_name=${4:-}
-
-    echo "path: $path"
-    echo "filename: $filename"
-    echo "filetypes: $filetypes"
-    echo "queue name: $queue_name"
+    #echo "path: $path"
+    #echo "filename: $filename"
+    #echo "filetypes: $filetypes"
+    #echo "queue name: $queue_name"
     queue_init ${queue_name} true
     for filetype in ${filetypes}; do
         find "${path}" -name "${filename}.${filetype}" -print0 | while IFS= read -r -d '' file; do
              queue_add "${queue_name}" "$file"
         done
     done
+}
+
+#############################
+# error printing
+#############################
+function error() {
+    local parent_lineno="${1:-}"
+    local message="${2:-}"
+    local code="${3:-1}"
+    if [[ -n "$message" ]] ; then
+        echo "$(tput setaf 1)Error on or near line ${parent_lineno}: ${message}; exiting with status ${code}$(tput setaf 9)"
+    else
+        echo "$(tput setaf 1)Error on or near line ${parent_lineno}; exiting with status ${code}$(tput setaf 9)"
+    fi
+    exit "${code}"
+}
+
+#############################
+# program finished
+#############################
+function finish {
+    # @description finish the program by cleaning up it's resources
+    # clean app directory, if fail don't care
+    # ^-- not needed, because using the /tmp directory
+    :
+}
+
+#############################
+# conversion command
+#############################
+# file, other parameters for specific type
+# get te conversion command based on filetype
+# command can be found in the 'conversion_command' variable
+get_conversion_command() {
+    # @description returns a conversion command
+    # based on the file type
+    # @param $1 filename of the to converted file
+    # @param $2 quality switch (integer)
+    # @param $2 extra parameters for the conversion
+    local file=${1:-}
+    local quality=${2:-"5"}
+    local parameters=${3:-}
+    local file_type=""
+    local output_file=""
+    local conversion_command=""       # external accessible after call
+    conversion_output_dir=""    # external accessible after call
+    if [ -z "${file}" ]; then
+        echo "${ERR_MISSING_PARAMETER}"
+        return 1 # empty file!
+    else
+        file_type=${file##*.} # set file type
+    fi
+    output_file=${file/$INPUT_DIR/$OUTPUT_DIR}  # change input for output dir
+    case $file_type in
+        ${SUPORTED_FILETYPES[$WAV_LIST]} )
+            conversion_command="WAV"
+            ;;
+        ${SUPORTED_FILETYPES[$FLAC_LIST]} )
+            conversion_command="FLAC"
+            ;;
+        ${SUPORTED_FILETYPES[$MP3_LIST]} )
+            conversion_command="ffmpeg -i '${file}' -acodec libvorbis -aq ${quality} '${output_file%.*}.ogg'"
+            ;;
+        ${SUPORTED_FILETYPES[$OGG_LIST]} )
+            conversion_command="ffmpeg -i '${file}' -acodec libvorbis -aq ${quality} '${output_file%.*}.ogg'"
+            ;;
+        *)
+            conversion_command=$ERR_TYPE_NOT_SUPORTED
+            ;;
+    esac
+    echo ${conversion_command}
+    return 0
 }
 
 # hmm this echo is handy for now, but remove it later.. oke?
@@ -422,165 +548,133 @@ echo "-----------------------"
 # 2. startup conversion
 # 2. copy files over
 
-# @todo better interface and some documentation and better function names?
-set_global() {
-    local var_name=""
-    local var_value=""
-    local GLOBAL_LOCATION="${GLOBAL_STORE_DIR}"
-    if [ -z "$1" ]; then
-        echo "missing variable name"
-        return 0
-    else
-        var_name=$1
-    fi
-    if [ -z "$2" ]; then
-        echo "missing variable value"
-        return 0
-    else
-        var_value=$2
-    fi
-    #echo "set: '$var_name' with value: '$var_value' in ${GLOBAL_LOCATION}/$var_name"
-    mkfilep "${GLOBAL_LOCATION}/$var_name"
-    echo "$var_value" > "${GLOBAL_LOCATION}/$var_name"
-}
-get_global() {
-    local var_name=""
-    local var_value=0
-    local GLOBAL_LOCATION="${GLOBAL_STORE_DIR}"
-    if [ -z "$1" ]; then
-        echo "missing variable name"
-        return 0
-    else
-        var_name=$1
-    fi
-    #echo "get: '$var_name' in ${GLOBAL_LOCATION}/$var_name"
-    #read var name from file in tmp
-    if [ -e "${GLOBAL_LOCATION}/$var_name" ]; then
-        var_value=$(<${GLOBAL_LOCATION}/$var_name)
-    fi
-    #echo "var value: $var_value"
-    return ${var_value}
-}
-
-# the index from where one file can be claimed
-#set_global "FILES_INDEX" 0
-
-get_file_to_convert() {
+# get file @todo add documentation
+function get_file_to_convert() {
     local filename=""
     local timeout=5 #seconds
-    local retry_timeout=$(bc -l <<< "scale = 2; $timeout/10.0")
+    local retry_timeout=$(bc -l <<< "scale = 2; $timeout/10.0") || true
     local retry_count=0
     local current_timeout=0
 
     # wait to get mutex, with timeout
     while true; do
-        if mutex_lock "get_convert_file" ; then
+        if mutex_lock "${MUTEX_READ_FILES_TO_PROCESS}" ; then
             filename=$(queue_read "${FILES_TO_PROCESS_QUEUE}")
-            if [ -z "$filename" ]; then
-                filename=$ERR_NO_MORE_FILES
-            fi     # $String is null.
+            if [ -z "${filename}" ]; then
+                filename=${ERR_NO_MORE_FILES}
+            fi
             # free the mutex
-            sleep 5;
-            mutex_free "get_convert_file"
+            #sleep 2;
+            mutex_free "${MUTEX_READ_FILES_TO_PROCESS}"
             break
         else
-            current_timeout=$(bc -l <<< "scale = 2; $retry_timeout*$retry_count")
+            current_timeout=$(bc -l <<< "scale = 2; $retry_timeout*$retry_count") || true
             if [[ ${current_timeout%%.*} -gt $timeout ]]; then
-                echo $ERR_MUTEX_TIMEOUT
+                echo ${ERR_MUTEX_TIMEOUT}
                 return 0
             fi
-            ((retry_count++))
+            ((retry_count++)) || true
             sleep $retry_timeout
         fi
     done
-    echo $filename # return the filename
+    echo "${filename}" # return the filename
 }
 
-convert_process() {
+# what is this process actually doing?
+function process_convert() {
+    # @description convert files from the queue
+    # - get a file from the queue
+    # - get a command based on the file
+    # - setup output directory
+    # - run command
+    # - check file
+    # - repeat when queue is empty
+    # * some other things to remember *
+    # * on INT signal, finish the conversion
+    # * check EVERYTHING, this script needs to run for HOURS!
     local PROCESS_PID=$BASHPID
     local PROCESS_PPID=$PPID
-    local TERMINATE=false
-    local filename
-    kill_process() {
-        echo "set terminate signal"
-        TERMINATE=true
+    local convert_command=""
+    local file=""
+    local file_directory=""
+    local file_output_directory=""
+    value_set "${PROCESS_PID}_TERMINATE" "false" # set default value
+    function terminate_process() {
+        local PROCESS_PID=${1:-}
+        value_set "${PROCESS_PID}_TERMINATE" "true" # set terminate variable
     }
-    trap kill_process INT
-    echo "process with PID: $PROCESS_PID is now running"
-
-
-    # get file from queue
-    # convert
-    local count=0
+    trap "terminate_process ${PROCESS_PID}" INT # on INT, let the task finish and then exit
+    trap 'error ${LINENO}' ERR # on error, print error
+    echo "conversion process with PID: $PROCESS_PID started"
     while true; do
-        ((count++))
-        #echo $PROCESS_PID: $count
         # get file to convert
-        filename=$(get_file_to_convert)
-        if [ "$filename" == "$ERR_NO_MORE_FILES" ]; then
+        file=$(get_file_to_convert) || true # this can fail, just accept it
+        if [ -z "${file}" ]; then
+            file=${ERR_NO_MORE_FILES}
+        fi
+        if [ "$file" == "$ERR_NO_MORE_FILES" ]; then
             echo "$PROCESS_PID: no more files left for me"
             return 0 # stop process
-        elif [ "$filename" == "$ERR_MUTEX_TIMEOUT" ]; then
-            echo "$PROCESS_PID: mutex timeout"
+        elif [ "$file" == "$ERR_MUTEX_TIMEOUT" ]; then
+            echo "$PROCESS_PID: mutex timeout" # retry
         else
-            #echo "$PROCESS_PID: filename: ${filename}"
+            #echo "$PROCESS_PID: file: '${file}'"
             # get convert command
-            get_conversion_command "$filename" "-q1"
-            # make conversion dir
-            #echo "$conversion_output_dir"
-            if [ ! -d "$conversion_output_dir" ]; then
-                # directory for output does not exist
-                mkdir -p "$conversion_output_dir"
-                if [ $? -ne 0 ] ; then
-                    echo "mkdir failed"
-                else
-                    echo "success"
-                    # run conversion command
+            convert_command=$(get_conversion_command "${file}" "${QUALITY}") || true
+            if [ -z "${convert_command}" ]; then
+                echo "Got no command to run"
+            elif [ "${convert_command}" == "${ERR_MISSING_PARAMETER}" ]; then
+                echo "Missing parameters"
+            else
+                file_output_directory=${file/$INPUT_DIR/$OUTPUT_DIR} # change input for output dir
+                file_output_directory="${file_output_directory%/*}"  # directory part of file
+                #echo "$PROCESS_PID: ${convert_command}"
+                #echo "$PROCESS_PID: ${file_output_directory}"
+                echo "$PROCESS_PID| converting: $(basename "$file")"
+                # make directory
+                if [ ! -d "${file_output_directory}" ]; then
+                    mkdir -p "${file_output_directory}" || true
                 fi
+                # run command
+                eval ${convert_command} "-nostats" "-loglevel 0" "-y" || true
             fi
-            # run convert command
-            echo "$conversion_command"
-            #echo "$conversion_output_dir"
         fi
-        #sleep 0.5;
-        if $TERMINATE ; then
-            echo "stopping process"
+        #sleep 2 || true # for debug is this delay handy
+        TERMINATE=$(value_get ${PROCESS_PID}_TERMINATE) || true
+        if [ "${TERMINATE}" = true ]; then
+            echo "$(tput setaf 2) process $PROCESS_PID stops now$(tput setaf 9)"
             return 0;
         fi
     done
+    echo "end of process"
     return 0
 }
 
-# start processes and add them to the array
-start_converter_processes() {
-    echo "starting convert process(es)"
-    for (( i = 0; i < $JOBS; i++ )); do
-        convert_process& # start new process
-        CONVERTER_PROCESSES[${#CONVERTER_PROCESSES[@]}]=$! # add to array
-    done
-}
-
-# kill all converter processes
-kill_converter_processes() {
-    for pid in ${CONVERTER_PROCESSES[*]}; do
-        echo "killing process: '$pid'"
-        pkill $pid
-    done
-    unset CONVERTER_PROCESSES # clear processes
-}
-
-# trap ctrl-c and call ctrl_c()
-trap ctrl_c INT
 function ctrl_c() {
-        echo "** Trapped CTRL-C"
-        kill_converter_processes
+    # @description do things when the SIGINT is trapped
+    echo "** Trapped CTRL-C"
+    echo "$(tput setaf 3)called terminate, sending stop signal now$(tput setaf 9)"
+
+    processes_signal ${CONVERTER_PROCESSES_QUEUE} 'SIGINT'
 }
+trap 'ctrl_c' INT
 
 # --- main ----------------------------------------------------------
 
-find_files "${INPUT_DIR}" "*" "${FILETYPES[*]}" "${FILES_TO_PROCESS_QUEUE}" # find the files needed for processing
-start_converter_processes   # start the conversion of the found files
-# find files for copyfile command
+# check no filetypes given
+# check input dir exist
+#   and has write access
+# check ouput dir exist
+#   and has write access
+#
+find_files "${INPUT_DIR}" "*" "${FILETYPES[*]:-}" "${FILES_TO_PROCESS_QUEUE}"   # find the files needed for processing
+processes_start 'process_convert' "${JOBS}" "${CONVERTER_PROCESSES_QUEUE}"      # start the conversion processes
+# find files for copyfile command or wait for convert tasks?
 # copy over files from queue (queue, output path)
-wait                        # wait for all child processes to finish
-kill_converter_processes    # redundant killing, if something was missed
+
+trap 'error ${LINENO}' ERR  # on error, print error
+trap finish EXIT            # on exit, clean up resources
+wait || true                # wait for all child processes to finish
+# when this finishes, it returns 1 so catch that please
+
+# --- done ----------------------------------------------------------
