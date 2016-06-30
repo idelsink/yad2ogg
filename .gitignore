@@ -1,1 +1,7 @@
-# empty, just like my dreams
+# audio file types
+*.wav
+*.flac
+*.alac
+*.mp3
+*.ogg
+*.m4a
