@@ -102,18 +102,20 @@ function generate_sample_command() {
     # @description returns a command to run to generate a sample
     # @param $1 the filetype
     # @param $2 extra flags
+    # @param $3 filename prefix
     local filetype=${1:-}
     local flags=${2:-}
+    local sample_name_prefix="test_file"
+    local filename_prefix=${3:-"${sample_name_prefix}"}
     local filename=""
     local base_command="ffmpeg -f lavfi -i \"sine=frequency=${SAMPLE_FREQUENCY}:sample_rate=${SAMPLE_RATE}:duration=${SAMPLE_DURATION}\""
-    local sample_name_prefix="test_file"
     local command=""
     if [ -z "${filetype}" ]; then
         echo "missing filetype"
         exit 1
     fi
     # {base} {optional flags} {output file}
-    filename="${sample_name_prefix}_${filetype}_T${SAMPLE_DURATION}_F${SAMPLE_FREQUENCY}_R${SAMPLE_RATE}.${filetype}"
+    filename="${filename_prefix}_${filetype}_T${SAMPLE_DURATION}_F${SAMPLE_FREQUENCY}_R${SAMPLE_RATE}.${filetype}"
     command="${base_command} ${flags} ${SAMPLE_OUTPUT_FOLDER}${filename}"
     echo "${command}"
 }
@@ -137,7 +139,7 @@ COMMAND=$(generate_sample_command "flac" "-y")
 eval "${COMMAND}" || true
 
 # alac (in m4a container)
-COMMAND=$(generate_sample_command "m4a" "-acodec alac -y")
+COMMAND=$(generate_sample_command "m4a" "-acodec alac -y" "alac_container")
 eval "${COMMAND}" || true
 
 # lossy
