@@ -505,45 +505,78 @@ get_conversion_command() {
     # per file type can be selected
     # @param $1 filename of the to converted file
     # @param $2 quality switch (integer)
-    # @param $2 extra parameters for the conversion
+    # @param $3 extra parameters for the conversion
     local file=${1:-}
-    local quality=${2:-"5"}
+    local quality=${2:-5}
     local parameters=${3:-}
     local file_type=""
     local output_file=""
-    local conversion_command=""       # external accessible after call
+    local conversion_command=()       # external accessible after call
     conversion_output_dir=""    # external accessible after call
     if [ -z "${file}" ]; then
-        echo "${ERR_MISSING_PARAMETER}"
+        ERROR "${ERR_MISSING_PARAMETER}"
         return 1 # empty file!
     else
         file_type=${file##*.} # set file type
     fi
     output_file=${file/$INPUT_DIR/$OUTPUT_DIR}  # change input for output dir
+    printf -v file "%q" "$file" # filter out special characters
+    printf -v output_file "%q" "$output_file" # filter out special characters
     case $file_type in
         ${SUPORTED_FILETYPES[$WAV_LIST]} )
-            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
+            if [ "${KEEP_METADATA}" = true ] ; then
+                parameters+=' -map_metadata 0'
+            else
+                parameters+=' -map_metadata -1'
+            fi
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
             ;;
         ${SUPORTED_FILETYPES[$FLAC_LIST]} )
-            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
+            if [ "${KEEP_METADATA}" = true ] ; then
+                parameters+=' -map_metadata 0'
+            else
+                parameters+=' -map_metadata -1'
+            fi
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
             ;;
         ${SUPORTED_FILETYPES[$ALAC_LIST]} )
-            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
+            if [ "${KEEP_METADATA}" = true ] ; then
+                parameters+=' -map_metadata 0'
+            else
+                parameters+=' -map_metadata -1'
+            fi
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
             ;;
         ${SUPORTED_FILETYPES[$MP3_LIST]} )
-            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
+            if [ "${KEEP_METADATA}" = true ] ; then
+                parameters+=' -map_metadata 0'
+            else
+                parameters+=' -map_metadata -1'
+            fi
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
+
             ;;
         ${SUPORTED_FILETYPES[$OGG_LIST]} )
-            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
+            if [ "${KEEP_METADATA}" = true ] ; then
+                parameters+=' -map_metadata 0'
+            else
+                parameters+=' -map_metadata -1'
+            fi
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
             ;;
         ${SUPORTED_FILETYPES[$M4A_LIST]} )
-            conversion_command="ffmpeg -i \"${file}\" -acodec libvorbis -aq ${quality} \"${output_file%.*}.ogg\""
+            if [ "${KEEP_METADATA}" = true ] ; then
+                parameters+=' -map_metadata 0'
+            else
+                parameters+=' -map_metadata -1'
+            fi
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
             ;;
         *)
             conversion_command=$ERR_TYPE_NOT_SUPORTED
             ;;
     esac
-    echo ${conversion_command}
+    echo "${conversion_command[@]}"
     return 0
 }
 
@@ -616,47 +649,78 @@ function process_convert() {
             file=${ERR_NO_MORE_FILES}
         fi
         if [ "$file" == "$ERR_NO_MORE_FILES" ]; then
-            echo "$PROCESS_PID: no more files left for me"
+            INFO "no more files left to process"
             break # stop process
         elif [ "$file" == "$ERR_MUTEX_TIMEOUT" ]; then
-            echo "$PROCESS_PID: mutex timeout" # retry
+            NOTICE "$PROCESS_PID| mutex timeout" # retry
         else
             # get convert command
-            convert_command=$(get_conversion_command "${file}" "${QUALITY}") || true
+            convert_command=$(get_conversion_command "${file}" "${QUALITY}" "${PARAMETERS}") || true
             if [ -z "${convert_command}" ]; then
-                echo "Got no command to run"
+                WARN "got no command to run"
             elif [ "${convert_command}" == "${ERR_MISSING_PARAMETER}" ]; then
-                echo "Missing parameters"
+                WARN "missing parameters"
             else
                 file_output_directory=${file/$INPUT_DIR/$OUTPUT_DIR} # change input for output dir
                 file_output_directory="${file_output_directory%/*}"  # directory part of file
-                #echo "$PROCESS_PID: ${convert_command}"
-                #echo "$PROCESS_PID: ${file_output_directory}"
-                echo "$PROCESS_PID| converting: $(basename "$file")"
+                INFO "processing: $(basename "$file")"
+
                 # make directory
                 if [ ! -d "${file_output_directory}" ]; then
                     mkdir -p "${file_output_directory}" || true
                 fi
-                # run command
-                eval "${convert_command}" "-nostats" "-loglevel 0" "-y" || true
+                # check overwrite
+                if [ "${OVERWRITE_EXISTING}" = true ] ; then
+                    convert_command+=" -y"
+                else
+                    convert_command+=" -n"
+                fi
+                DEBUG "$PROCESS_PID| command: ${convert_command}"
+                convert_command+=" -loglevel error" # add log flag to command
+                # run command and catch error message
+                err_ret_message=$(eval "${convert_command}" 2>&1 ) || err_ret_code=$?
+
+                # check return code of process
+                if [ ! "${err_ret_code}" = 0 ] ; then
+                    if [[ "${err_ret_message}" =~ (^File .* already exists. Exiting.$) ]]; then
+                        #ERROR "MATCH"
+                        DEBUG "${err_ret_message}"
+                        err_ret_message=""
+                    fi
+                    if [ ! -z "${err_ret_message}" ]; then
+                        # check return message type
+                        # already exists, ignore
+                        #if [[ "${err_ret_message}" =~ ^File .* already exists. Exiting.$ ]]; then
+                        regex="^File .* already exists. Exiting.$"
+                        #if [[ "${err_ret_message}" =~ $regex ]]; then
+                        #    ERROR "MATCH"
+                        #fi
+                        NOTICE "$PROCESS_PID| convert command returned message: ${err_ret_message}"
+                    fi
+                    if [ "${OVERWRITE_EXISTING}" = true ] ; then
+                        # error from command, even if overwrite is enabled
+                        ERROR "$PROCESS_PID| error while processing: $file"
+                        DEBUG "$PROCESS_PID| return code of process command is: $err_ret_code"
+                    fi
+                fi
             fi
         fi
-        #sleep 2 || true # for debug is this delay handy
         TERMINATE=$(value_get ${PROCESS_PID}_TERMINATE) || true
         if [ "${TERMINATE}" = true ]; then
             break
         fi
     done
-    echo "$(tput setaf 2)process $PROCESS_PID stops now$(tput setaf 9)"
+    DEBUG "process $PROCESS_PID stops now"
     return 0
 }
 
 function ctrl_c() {
     # @description do things when the SIGINT is trapped
-    echo "** Trapped CTRL-C"
-    echo "$(tput setaf 3)requested termination, sending signal now$(tput setaf 9)"
-
+    DEBUG "** Trapped CTRL-C"
+    INFO "requested termination"
     processes_signal ${CONVERTER_PROCESSES_QUEUE} 'SIGINT'
+    wait || true                # wait for all child processes to finish
+    exit 1
 }
 trap 'ctrl_c' INT
 
