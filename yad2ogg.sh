@@ -714,6 +714,59 @@ function process_convert() {
     return 0
 }
 
+#############################
+# copy over files
+#############################
+function copy_files_over() {
+    # @description copy over files
+    # @param $1 source
+    # @param $2 dest
+    # @param rest of the parameters filenames
+    local source=${1:-"./"}
+    local dest=${2:-"./"}
+    shift 2
+    local files=${@:-""}
+    local filename=""
+    local extension=""
+    local err_ret_code=0
+    local err_ret_message=""
+    local readonly copy_queue="files_to_copy_over"
+    DEBUG "source: $source"
+    DEBUG "dest: $dest"
+    DEBUG "files: ${files[@]}"
+    for file in ${files[@]}; do
+        filename=$(basename "$file")
+        extension="${filename##*.}"
+        filename="${filename%.*}"
+        INFO "searching for the files to copy over"
+        find_files "${source}" "${filename}" "${extension}" "${copy_queue}"
+        INFO "copying over files"
+        # process queue
+        file_to_process=$(queue_read ${copy_queue})
+        while [ ! -z "${file_to_process}" ]; do
+            DEBUG "copy file: ${file_to_process}"
+            file_output_directory=${file_to_process/$source/$dest} # change input for output dir
+            file_output_directory="${file_output_directory%/*}"  # directory part of file
+            # make directory
+            if [ ! -d "${file_output_directory}" ]; then
+                mkdir -p "${file_output_directory}" || true
+            fi
+            output_file=${file_to_process/$source/$dest}
+            INFO "copying file: '${file_to_process}'"
+            DEBUG "to: '${output_file}'"
+            err_ret_message=$(cp "${file_to_process}" "${output_file}" 2>&1 ) || err_ret_code=$?
+            if [ ! "${err_ret_code}" = 0 ] ; then
+                if [ ! -z "${err_ret_message}" ]; then
+                    ERROR "copy command returned message: ${err_ret_message}"
+                fi
+                ERROR "error while processing: ${file_to_process}"
+                DEBUG "return code of command is: ${err_ret_code}"
+            fi
+            file_to_process=$(queue_read ${copy_queue}) # read new file
+        done
+    done
+}
+
 function ctrl_c() {
     # @description do things when the SIGINT is trapped
     DEBUG "** Trapped CTRL-C"
@@ -743,6 +796,11 @@ INFO "starting the conversion process(es)"
 processes_start 'process_convert' "${JOBS}" "${CONVERTER_PROCESSES_QUEUE}"      # start the conversion processes
 
 wait || true                # wait for all child processes to finish
+
+INFO "copying over the following files: ${COPY_FILES[@]:-}"
+copy_files_over "${INPUT_DIR}" "${OUTPUT_DIR}" "${COPY_FILES[@]:-}"
+# find files for copyfile command or wait for convert tasks?
+# copy over files from queue (queue, output path)
 # when this finishes, it returns 1 so catch that please
 INFO "${APPNAME} is now done"
 
