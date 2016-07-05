@@ -30,7 +30,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #########################################################################
-#########################################################################
 # Explanation
 # yad2ogg -i input_folder -o destination --copyfile "cover.jpg"
 #########################################################################
@@ -39,38 +38,44 @@ set -e          # kill script if a command fails
 set -o nounset  # unset values give error
 set -o pipefail # prevents errors in a pipeline from being masked
 
+SCRIPT_PATH=${0%/*}
+#############################
+# logger setup
+#############################
+source ${SCRIPT_PATH}/b-log/b-log.sh # include the log script
+LOG_LEVEL_INFO   # set log level
+B_LOG -o true   # log over STDIO
+#B_LOG -f yad20gg.log --file-prefix-enable --file-suffix-enable # log in a file
+
 VERSION=0.0.1
 APPNAME="yad2ogg"
-USAGE="
-Usage: command -hVio
--h --help help
--V --version version
--i --input input directory
--o --output destination/output directory
--q --quality quality switch
--p --parameters extra conversion parameters
--j --jobs number of concurrent jobs
--c --copyfile 'xx' copy files over from original directory to destination where tracks were converted eg. '*.cue or *.jpg'.
--m --metadata keep the metadata(tags) from the original files
--w --overwrite overwrite existing files
-
-=FILE TYPES=
-types of input files to process
--f --filetypes file type eg. 'flac or ogg'
--a all supported file types
-Or use these parameters(recommended):
---WAV
---FLAC
---ALAC
---MP3
---OGG
---M4A
---ALL
-"
 
 function PRINT_USAGE() {
     # @description prints the short usage of the script
-	echo "$USAGE"
+    echo "Usage: yad2ogg.sh [options]"
+    echo "    -h --help             Show usage"
+    echo "    -V --version          Version"
+    echo "    -i --input 'dir'      Input/source directory"
+    echo "    -o --output 'dir'     Destination/output directory"
+    echo "    -q --quality 5.0      Quality switch where N is a number"
+    echo "    -p --parameters ''    Extra conversion parameters"
+    echo "    -j --jobs 1           Number of concurrent jobs"
+    echo "    -c --copyfile '*.jpg' Copy files over from original directory to "
+    echo "                          destination directory eg. '*.cue or *.jpg'."
+    echo "    -m --metadata         Don't keep metadata(tags) from the original files"
+    echo "    -w --overwrite        Overwrite existing files"
+    echo ""
+    echo "                          =FILE TYPES="
+    echo "                          types of input files to process"
+    echo "    -f --filetypes        File type eg. 'wav flac ...'"
+    echo "    -f 'wav'  --WAV"
+    echo "    -f 'flac' --FLAC"
+    echo "    -f 'alac' --ALAC"
+    echo "    -f 'mp3'  --MP3"
+    echo "    -f 'ogg'  --OGG"
+    echo "    -f 'm4a'  --M4A"
+    echo "    -a --ALL              All supported file types"
+    echo ""
 }
 
 # --- global variables ----------------------------------------------
@@ -82,7 +87,7 @@ QUALITY="5"         # the quality for the converter switch
 PARAMETERS=""       # optional parameters for the converter
 JOBS=1              # number of concurrent jobs (default 1)
 COPY_FILES=()       # files to copy over from the source directory
-KEEP_METADATA=false # keep metadata(tags)
+KEEP_METADATA=true # keep metadata(tags)
 OVERWRITE_EXISTING=false # overwrite existing files
 FILETYPES=()        # file types to convert
 # file types supported
@@ -156,7 +161,7 @@ for arg in "$@"; do     # transform long options to short ones
   esac
 done
 # get options
-while getopts "hVi:o:q:j:c:mwf:a" optname
+while getopts "hVi:o:q:p:j:c:mwf:a" optname
 do
     case "$optname" in
         "h")
@@ -177,32 +182,28 @@ do
             QUALITY=${OPTARG}
             ;;
         "p")
-            echo "option extra parameters: $OPTARG"
+            PARAMETERS=$OPTARG
             ;;
         "j")
             JOBS=$OPTARG
-            echo "option jobs: $JOBS"
             ;;
         "c")
-            echo "option copyfile: $OPTARG"
+            COPY_FILES[${#COPY_FILES[@]}]=$OPTARG
             ;;
         "m")
-            echo "option keep metadata"
+            KEEP_METADATA=true
             ;;
         "w")
-            echo "option overwrite existing files"
+            OVERWRITE_EXISTING=true
             ;;
         "f")
-            echo "option filetype: '$OPTARG'"
             FILETYPES[${#FILETYPES[@]}]=$OPTARG
             ;;
         "a")
-            echo "option filetype: (all)"
             FILETYPES=${SUPORTED_FILETYPES[*]}
-            echo ${FILETYPES[*]}
             ;;
         *)
-            echo "unknown error while processing options"
+            FATAL "unknown error while processing options"
             exit 1;
         ;;
     esac
@@ -227,7 +228,7 @@ function queue_init() {
     local queue_name=${1:-}
     local clear_queue=false
     if [ -z "$queue_name" ]; then
-        echo "missing queue name"
+        FATAL "missing queue name"
         exit 1
     fi
     if [ -z "${2:-}" ]; then
@@ -240,7 +241,7 @@ function queue_init() {
     if [ ! -d "$QUEUE_STORAGE" ]; then
         mkdir -p "$QUEUE_STORAGE"
         if [ $? -ne 0 ] ; then
-            echo "could not make the queue file"
+            FATAL "could not make the queue file"
             exit 1
         fi
     fi
@@ -249,7 +250,7 @@ function queue_init() {
         touch "$queue_file"
     fi
     if [ ! -w "$queue_file" ] ; then
-        echo "cannot write to $queue_file"
+        FATAL "cannot write to $queue_file"
         exit 1
     fi
     if $clear_queue; then # clearing the queue file
@@ -262,16 +263,17 @@ function queue_add() {
     # @param $2 the queue data
     local readonly queue_name_prefix="queue_"
     local queue_name=${1:-}
-    local queue_data=${2:-}
+    shift
+    local queue_data=${@:-}
     if [ -z "$queue_name" ]; then
-        echo "missing queue name"
+        FATAL "missing queue name"
         exit 1
     fi
     local queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
     queue_init $queue_name # make sure that the queue exists
-    #echo "queue data: '$queue_data'"
-    #echo "queue name: $queue_file"
-    echo $queue_data >> $queue_file # append data to file
+    DEBUG "queue data: '${queue_data}'"
+    DEBUG "queue name: $queue_file"
+    echo "${queue_data}" >> $queue_file # append data to file
 }
 function queue_read() {
     # @description read value from the queue on a fifo basis
@@ -281,14 +283,14 @@ function queue_read() {
     local queue_name=${1:-}
     local queue_data=""
     if [ -z "$queue_name" ]; then
-        echo "missing queue name"
+        FATAL "missing queue name"
         exit 1
     fi
     local queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
     queue_init "${queue_name}" # make sure that the queue exists
     queue_data=$(head -n 1 "${queue_file}") || true # get first line of file
     sed -i 1d $queue_file || true # remove first line of file
-    echo $queue_data
+    echo "${queue_data}"
 }
 
 #############################
@@ -313,7 +315,6 @@ function mutex_lock() {
     #prefix+="_$mutex_name"
     local fd=${2:-$LOCK_FD}
     local mutex_file="${LOCKFILE_DIR}/${mutex_name_prefix}${mutex_name}"
-
     # create lock file
     mkdir -p "$(dirname "${mutex_file}")" || return 0
     touch "${mutex_file}"
@@ -353,10 +354,10 @@ function processes_start() {
     local identifier=${3:-"${function}"}
     local queue_name="processes_pid_${identifier:-"default"}"
     local pid=""
-    #echo "function: ${function}"
-    #echo "jobs: ${jobs}"
-    #echo "id: ${identifier}"
-    #echo "queue name: ${queue_name}"
+    DEBUG "function: ${function}"
+    DEBUG "jobs: ${jobs}"
+    DEBUG "id: ${identifier}"
+    DEBUG "queue name: ${queue_name}"
     queue_init "${queue_name}" true
     if [ ! -z "${function}" ]; then
         for (( i = 0; i < ${jobs}; i++ )); do
@@ -376,12 +377,11 @@ function processes_signal() {
     local queue_name="processes_pid_${identifier:-"default"}"
     #pid=""
     pid=$(queue_read ${queue_name})
-    #echo "pid: ${pid}"
     while [ ! -z "${pid}" ]; do
         # check if pid exists
         if [ -n "$(ps -p $pid -o pid=)" ]; then
            kill -${signal} $pid
-           echo "signaled process with PID: ${pid}"
+           DEBUG "signaled process with PID: ${pid}"
         fi
         pid=$(queue_read ${queue_name})
     done
@@ -398,11 +398,11 @@ function value_set() {
     local var_value=${2:-}
     local readonly var_name_prefix="variable_"
     if [ -z "${var_name}" ]; then
-        echo "missing variable name"
+        ERROR "missing variable name"
         return 1
     fi
     if [ -z "${var_value}" ]; then
-        echo "missing variable value"
+        ERROR "missing variable value"
         return 1
     fi
     local var_file="${VARIABLE_STORAGE}/${var_name_prefix}${var_name}"
@@ -410,7 +410,7 @@ function value_set() {
     if [ ! -d "${VARIABLE_STORAGE}" ]; then
         mkdir -p "${VARIABLE_STORAGE}"
         if [ $? -ne 0 ] ; then
-            echo "could not make the variable value file"
+            FATAL "could not make the variable value file"
             exit 1
         fi
     fi
@@ -419,7 +419,7 @@ function value_set() {
         touch "$var_file"
     fi
     if [ ! -w "$var_file" ] ; then
-        echo "cannot write to $var_file"
+        FATAL "cannot write to $var_file"
         exit 1
     fi
     echo "${var_value}" > "${var_file}" # write value in file
@@ -432,14 +432,14 @@ function value_get() {
     local var_value=""
     local readonly var_name_prefix="variable_"
     if [ -z "${var_name}" ]; then
-        echo "missing variable name"
+        ERROR "missing variable name"
         return 1
     fi
     local var_file="${VARIABLE_STORAGE}/${var_name_prefix}${var_name}"
     if [ -e "${var_file}" ]; then
         var_value=$(<${var_file})
     fi
-    echo ${var_value}
+    echo "${var_value}"
 }
 
 #############################
@@ -451,20 +451,21 @@ function find_files() {
     # - add them to a queue that will be cleared first
     # @param $1 path to directory
     # @param $2 filename(wildcards accepted)
-    # @param $2 filetypes(extensions)
-    # @param $3 queue name
+    # @param $3 filetypes(extensions)
+    # @param $4 queue name
     local path=${1:-"./"}
     local filename=${2:-}
     local filetypes=${3:-}
     local queue_name=${4:-}
-    #echo "path: $path"
-    #echo "filename: $filename"
-    #echo "filetypes: $filetypes"
-    #echo "queue name: $queue_name"
+    DEBUG "path: $path"
+    DEBUG "filename: $filename"
+    DEBUG "filetypes: $filetypes"
+    DEBUG "queue name: $queue_name"
     queue_init ${queue_name} true
     for filetype in ${filetypes}; do
-        find "${path}" -name "${filename}.${filetype}" -print0 | while IFS= read -r -d '' file; do
+        find "${path}" -type f -name "${filename}.${filetype}" -print0 | while IFS= read -r -d '' file; do
              queue_add "${queue_name}" "$file"
+             DEBUG "file $file"
         done
     done
 }
@@ -477,9 +478,9 @@ function error() {
     local message="${2:-}"
     local code="${3:-1}"
     if [[ -n "$message" ]] ; then
-        echo "$(tput setaf 1)Error on or near line ${parent_lineno}: ${message}; exiting with status ${code}$(tput setaf 9)"
+        ERROR "Error on or near line ${parent_lineno}: ${message}; exiting with status ${code}"
     else
-        echo "$(tput setaf 1)Error on or near line ${parent_lineno}; exiting with status ${code}$(tput setaf 9)"
+        ERROR "Error on or near line ${parent_lineno}; exiting with status ${code}"
     fi
     exit "${code}"
 }
@@ -598,6 +599,8 @@ function process_convert() {
     local file=""
     local file_directory=""
     local file_output_directory=""
+    local err_ret_code=0
+    local err_ret_message=""
     value_set "${PROCESS_PID}_TERMINATE" "false" # set default value
     function terminate_process() {
         local PROCESS_PID=${1:-}
@@ -605,7 +608,7 @@ function process_convert() {
     }
     trap "terminate_process ${PROCESS_PID}" INT # on INT, let the task finish and then exit
     trap 'error ${LINENO}' ERR # on error, print error
-    echo "conversion process with PID: $PROCESS_PID started"
+    DEBUG "conversion process with PID: $PROCESS_PID started"
     while true; do
         # get file to convert
         file=$(get_file_to_convert) || true # this can fail, just accept it
@@ -665,15 +668,18 @@ trap 'ctrl_c' INT
 # check ouput dir exist
 #   and has write access
 #
-find_files "${INPUT_DIR}" "*" "${FILETYPES[*]:-}" "${FILES_TO_PROCESS_QUEUE}"   # find the files needed for processing
-processes_start 'process_convert' "${JOBS}" "${CONVERTER_PROCESSES_QUEUE}"      # start the conversion processes
-# find files for copyfile command or wait for convert tasks?
-# copy over files from queue (queue, output path)
-
 trap 'error ${LINENO}' ERR  # on error, print error
 trap finish EXIT            # on exit, clean up resources
+
+INFO "${APPNAME} v${VERSION}"
+INFO "looking for files with the filetypes: ${FILETYPES[*]}"
+find_files "${INPUT_DIR}" "*" "${FILETYPES[*]:-}" "${FILES_TO_PROCESS_QUEUE}"   # find the files needed for processing
+
+INFO "starting the conversion process(es)"
+processes_start 'process_convert' "${JOBS}" "${CONVERTER_PROCESSES_QUEUE}"      # start the conversion processes
+
 wait || true                # wait for all child processes to finish
 # when this finishes, it returns 1 so catch that please
-echo "$(tput setaf 5)${APPNAME} is now done$(tput setaf 9)"
+INFO "${APPNAME} is now done"
 
 # --- done ----------------------------------------------------------
