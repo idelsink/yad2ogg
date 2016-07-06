@@ -799,19 +799,21 @@ B_LOG --file "${LOG_FILE}" --file-prefix-enable --file-suffix-enable # log in a 
 B_LOG --syslog "${SYSLOG_PARAM}" # log to syslog
 B_LOG --log-level ${VERBOSITY} # set log level
 
-# check no filetypes given
-# check input dir exist
-#   and has write access
-# check ouput dir exist
-#   and has write access
-#
+if [ ! -r "${INPUT_DIR}" ]; then    # check input directory for read access
+    FATAL "the input directory cannot be read"
+    exit 1
+fi
+if [ ! -w "${OUTPUT_DIR}" ]; then   # check output directory for write access
+    FATAL "the output directory is not writable"
+    exit 1
+fi
+
 trap 'error ${LINENO}' ERR  # on error, print error
 trap finish EXIT            # on exit, clean up resources
 
-
 NOTICE "${APPNAME} v${VERSION}"
 NOTICE "finding files and start conversion"
-INFO "looking for files with the filetypes: ${FILETYPES[*]}"
+INFO "looking for files with the filetypes: ${FILETYPES[*]-""}"
 find_files "${INPUT_DIR}" "*" "${FILETYPES[*]:-}" "${FILES_TO_PROCESS_QUEUE}"   # find the files needed for processing
 
 INFO "starting the conversion process(es)"
