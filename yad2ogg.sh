@@ -39,13 +39,7 @@ set -o nounset  # unset values give error
 set -o pipefail # prevents errors in a pipeline from being masked
 
 SCRIPT_PATH=${0%/*}
-#############################
-# logger setup
-#############################
 source ${SCRIPT_PATH}/b-log/b-log.sh # include the log script
-LOG_LEVEL_INFO   # set log level
-B_LOG -o true   # log over STDIO
-#B_LOG -f yad20gg.log --file-prefix-enable --file-suffix-enable # log in a file
 
 VERSION=0.0.1
 APPNAME="yad2ogg"
@@ -55,6 +49,9 @@ function PRINT_USAGE() {
     echo "Usage: yad2ogg.sh [options]"
     echo "    -h --help             Show usage"
     echo "    -V --version          Version"
+    echo "    -v --verbose          Add more verbosity"
+    echo "    -l --logfile 'file'   Log to a file"
+    echo "    -s --syslog 'param'   Log to syslog \"logger 'param' log-message\""
     echo "    -i --input 'dir'      Input/source directory"
     echo "    -o --output 'dir'     Destination/output directory"
     echo "    -q --quality 5.0      Quality switch where N is a number"
@@ -79,17 +76,20 @@ function PRINT_USAGE() {
 }
 
 # --- global variables ----------------------------------------------
-INPUT_DIR='./'      # input directory
-OUTPUT_DIR='./'     # output directory
-QUALITY="5"         # the quality for the converter switch
+INPUT_DIR='./'              # input directory
+OUTPUT_DIR='./'             # output directory
+QUALITY="5"                 # the quality for the converter switch
 # "Most users agree -q 5 achieves transparency, if the source is the original or lossless."
 # taken from: http://wiki.hydrogenaud.io/index.php?title=Recommended_Ogg_Vorbis
-PARAMETERS=""       # optional parameters for the converter
-JOBS=1              # number of concurrent jobs (default 1)
-COPY_FILES=()       # files to copy over from the source directory
-KEEP_METADATA=true # keep metadata(tags)
-OVERWRITE_EXISTING=false # overwrite existing files
-FILETYPES=()        # file types to convert
+PARAMETERS=""               # optional parameters for the converter
+JOBS=1                      # number of concurrent jobs (default 1)
+VERBOSITY=$LOG_LEVEL_NOTICE # set starting log level
+LOG_FILE=""                 # file to log to (default empty, so disabled)
+SYSLOG_PARAM=""             # syslog parameters (default empty, so disabled)
+COPY_FILES=()               # files to copy over from the source directory
+KEEP_METADATA=true          # keep metadata(tags)
+OVERWRITE_EXISTING=false    # overwrite existing files
+FILETYPES=()                # file types to convert
 # file types supported
 readonly SUPORTED_FILETYPES=(
     # lossless
@@ -139,6 +139,9 @@ for arg in "$@"; do     # transform long options to short ones
     case "$arg" in
         "--help") set -- "$@" "-h" ;;
         "--version") set -- "$@" "-V" ;;
+        "--verbose") set -- "$@" "-v" ;;
+        "--logfile") set -- "$@" "-l" ;;
+        "--syslog") set -- "$@" "-s" ;;
         "--input") set -- "$@" "-i" ;;
         "--output") set -- "$@" "-o" ;;
         "--quality") set -- "$@" "-q" ;;
@@ -161,7 +164,7 @@ for arg in "$@"; do     # transform long options to short ones
   esac
 done
 # get options
-while getopts "hVi:o:q:p:j:c:mwf:a" optname
+while getopts "hVvl:s:i:o:q:p:j:c:mwf:a" optname
 do
     case "$optname" in
         "h")
@@ -172,23 +175,32 @@ do
             echo "${APPNAME} v${VERSION}"
             exit 0;
             ;;
+        "v")
+            VERBOSITY=$(($VERBOSITY+100)) # increment log level
+            ;;
+        "l")
+            LOG_FILE="${OPTARG}"
+            ;;
+        "s")
+            SYSLOG_PARAM="${OPTARG}"
+            ;;
         "i")
-            INPUT_DIR=$OPTARG
+            INPUT_DIR="${OPTARG}"
             ;;
         "o")
-            OUTPUT_DIR=$OPTARG
+            OUTPUT_DIR="${OPTARG}"
             ;;
         "q")
-            QUALITY=${OPTARG}
+            QUALITY="${OPTARG}"
             ;;
         "p")
-            PARAMETERS=$OPTARG
+            PARAMETERS="${OPTARG}"
             ;;
         "j")
-            JOBS=$OPTARG
+            JOBS="${OPTARG}"
             ;;
         "c")
-            COPY_FILES[${#COPY_FILES[@]}]=$OPTARG
+            COPY_FILES[${#COPY_FILES[@]}]="${OPTARG}"
             ;;
         "m")
             KEEP_METADATA=true
@@ -197,7 +209,7 @@ do
             OVERWRITE_EXISTING=true
             ;;
         "f")
-            FILETYPES[${#FILETYPES[@]}]=$OPTARG
+            FILETYPES[${#FILETYPES[@]}]="${OPTARG}"
             ;;
         "a")
             FILETYPES=${SUPORTED_FILETYPES[*]}
@@ -779,6 +791,14 @@ trap 'ctrl_c' INT
 
 # --- main ----------------------------------------------------------
 
+#############################
+# logger setup
+#############################
+B_LOG --stdout true   # log over STDIO
+B_LOG --file "${LOG_FILE}" --file-prefix-enable --file-suffix-enable # log in a file
+B_LOG --syslog "${SYSLOG_PARAM}" # log to syslog
+B_LOG --log-level ${VERBOSITY} # set log level
+
 # check no filetypes given
 # check input dir exist
 #   and has write access
@@ -788,7 +808,9 @@ trap 'ctrl_c' INT
 trap 'error ${LINENO}' ERR  # on error, print error
 trap finish EXIT            # on exit, clean up resources
 
-INFO "${APPNAME} v${VERSION}"
+
+NOTICE "${APPNAME} v${VERSION}"
+NOTICE "finding files and start conversion"
 INFO "looking for files with the filetypes: ${FILETYPES[*]}"
 find_files "${INPUT_DIR}" "*" "${FILETYPES[*]:-}" "${FILES_TO_PROCESS_QUEUE}"   # find the files needed for processing
 
@@ -796,12 +818,10 @@ INFO "starting the conversion process(es)"
 processes_start 'process_convert' "${JOBS}" "${CONVERTER_PROCESSES_QUEUE}"      # start the conversion processes
 
 wait || true                # wait for all child processes to finish
-
+NOTICE "done converting, copying over files"
 INFO "copying over the following files: ${COPY_FILES[@]:-}"
 copy_files_over "${INPUT_DIR}" "${OUTPUT_DIR}" "${COPY_FILES[@]:-}"
-# find files for copyfile command or wait for convert tasks?
-# copy over files from queue (queue, output path)
-# when this finishes, it returns 1 so catch that please
-INFO "${APPNAME} is now done"
+
+NOTICE "${APPNAME} is now done"
 
 # --- done ----------------------------------------------------------
