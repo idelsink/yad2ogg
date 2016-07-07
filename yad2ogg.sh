@@ -694,25 +694,13 @@ function process_convert() {
 
                 # check return code of process
                 if [ ! "${err_ret_code}" = 0 ] ; then
+                    # command return error
                     if [[ "${err_ret_message}" =~ (^File .* already exists. Exiting.$) ]]; then
-                        #ERROR "MATCH"
-                        DEBUG "${err_ret_message}"
+                        DEBUG "file already exists, skipping ${file}"
                         err_ret_message=""
-                    fi
-                    if [ ! -z "${err_ret_message}" ]; then
-                        # check return message type
-                        # already exists, ignore
-                        #if [[ "${err_ret_message}" =~ ^File .* already exists. Exiting.$ ]]; then
-                        regex="^File .* already exists. Exiting.$"
-                        #if [[ "${err_ret_message}" =~ $regex ]]; then
-                        #    ERROR "MATCH"
-                        #fi
-                        NOTICE "$PROCESS_PID| convert command returned message: ${err_ret_message}"
-                    fi
-                    if [ "${OVERWRITE_EXISTING}" = true ] ; then
-                        # error from command, even if overwrite is enabled
-                        ERROR "$PROCESS_PID| error while processing: $file"
-                        DEBUG "$PROCESS_PID| return code of process command is: $err_ret_code"
+                    else
+                        ERROR "error while processing: $file"
+                        DEBUG "return code of command is: $err_ret_code"
                     fi
                 fi
             fi
@@ -813,7 +801,7 @@ trap finish EXIT            # on exit, clean up resources
 
 NOTICE "${APPNAME} v${VERSION}"
 NOTICE "finding files and start conversion"
-INFO "looking for files with the filetypes: ${FILETYPES[*]-""}"
+INFO "looking for files with the filetypes: ${FILETYPES[*]:-}"
 find_files "${INPUT_DIR}" "*" "${FILETYPES[*]:-}" "${FILES_TO_PROCESS_QUEUE}"   # find the files needed for processing
 
 INFO "starting the conversion process(es)"
