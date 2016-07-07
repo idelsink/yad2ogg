@@ -5,3 +5,10 @@
 *.mp3
 *.ogg
 *.m4a
+
+# test files
+test/input/
+test/output/
+
+# log files
+*.log
