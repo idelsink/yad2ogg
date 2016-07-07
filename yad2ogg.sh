@@ -50,15 +50,21 @@ function PRINT_USAGE() {
     echo "    -h --help             Show usage"
     echo "    -V --version          Version"
     echo "    -v --verbose          Add more verbosity"
-    echo "    -l --logfile 'file'   Log to a file"
-    echo "    -s --syslog 'param'   Log to syslog \"logger 'param' log-message\""
-    echo "    -i --input 'dir'      Input/source directory"
-    echo "    -o --output 'dir'     Destination/output directory"
-    echo "    -q --quality 5.0      Quality switch where N is a number"
-    echo "    -p --parameters ''    Extra conversion parameters"
+    echo "    -l --logfile file     Log to a file"
+    echo "    -s --syslog param     Log to syslog \"logger 'param' log-message\""
+    echo "    -i --input dir        Input/source directory"
+    echo "    -o --output dir       Destination/output directory"
+    echo "    -q --quality n        Quality switch where n is a number"
+    echo "    -p --parameters param Extra conversion parameters"
     echo "    -j --jobs 1           Number of concurrent jobs"
-    echo "    -c --copyfile '*.jpg' Copy files over from original directory to "
+    echo "    -c --copyfile file    Copy files over from original directory to "
     echo "                          destination directory eg. '*.cue or *.jpg'."
+    echo "    -z --sync             Synchronize the output folder to the input folder."
+    echo "                          If a file exists in the output folder but not in the "
+    echo "                          input folder, it will be removed."
+    echo "                          Extension will be ignored so that a converted file"
+    echo "                          will 'match' the original file"
+    echo "    -Z --sync-hidden      Same as --sync but includes hidden files/folders"
     echo "    -m --metadata         Don't keep metadata(tags) from the original files"
     echo "    -w --overwrite        Overwrite existing files"
     echo ""
@@ -89,6 +95,8 @@ SYSLOG_PARAM=""             # syslog parameters (default empty, so disabled)
 COPY_FILES=()               # files to copy over from the source directory
 KEEP_METADATA=true          # keep metadata(tags)
 OVERWRITE_EXISTING=false    # overwrite existing files
+COUNTERPART_SYNC=false      # synchronize
+COUNTERPART_HIDDEN=false    # include hidden files from counterpart check
 FILETYPES=()                # file types to convert
 # file types supported
 readonly SUPORTED_FILETYPES=(
@@ -147,6 +155,8 @@ for arg in "$@"; do     # transform long options to short ones
         "--quality") set -- "$@" "-q" ;;
         "--jobs") set -- "$@" "-j" ;;
         "--copyfile") set -- "$@" "-c" ;;
+        "--sync") set -- "$@" "-z" ;;
+        "--sync-hidden") set -- "$@" "-Z" ;;
         "--metadata") set -- "$@" "-m" ;;
         "--overwrite") set -- "$@" "-w" ;;
         # filetypes
@@ -164,7 +174,7 @@ for arg in "$@"; do     # transform long options to short ones
   esac
 done
 # get options
-while getopts "hVvl:s:i:o:q:p:j:c:mwf:a" optname
+while getopts "hVvl:s:i:o:q:p:j:c:zZmwf:a" optname
 do
     case "$optname" in
         "h")
@@ -201,6 +211,13 @@ do
             ;;
         "c")
             COPY_FILES[${#COPY_FILES[@]}]="${OPTARG}"
+            ;;
+        "z")
+            COUNTERPART_SYNC=true
+            ;;
+        "Z")
+            COUNTERPART_SYNC=true
+            COUNTERPART_HIDDEN=true
             ;;
         "m")
             KEEP_METADATA=true
@@ -465,17 +482,24 @@ function find_files() {
     # @param $2 filename(wildcards accepted)
     # @param $3 filetypes(extensions)
     # @param $4 queue name
+    # @param $5 ignore expression
     local path=${1:-"./"}
     local filename=${2:-}
-    local filetypes=${3:-}
+    set -f # temp disable expansion
+    # so that wildcards are accepted for the for loop
+    local filetypes=(${3:-})
+    set +f
     local queue_name=${4:-}
-    DEBUG "path: $path"
-    DEBUG "filename: $filename"
-    DEBUG "filetypes: $filetypes"
-    DEBUG "queue name: $queue_name"
+    local ignore=${5:-}
+    DEBUG "path: ${path}"
+    DEBUG "filename: ${filename}"
+    DEBUG "filetypes: ${filetypes}"
+    DEBUG "queue name: ${queue_name}"
+    DEBUG "ignore: ${ignore}"
     queue_init ${queue_name} true
-    for filetype in ${filetypes}; do
-        find "${path}" -type f -name "${filename}.${filetype}" -print0 | while IFS= read -r -d '' file; do
+    for filetype in "${filetypes[@]}"; do
+        DEBUG "filetype: ${filetype}"
+        find "${path}" -type f -name "${filename}.${filetype}" -not -path "${ignore}" -print0 | while IFS= read -r -d '' file; do
              queue_add "${queue_name}" "$file"
              DEBUG "file $file"
         done
@@ -526,7 +550,7 @@ get_conversion_command() {
     local conversion_command=()       # external accessible after call
     conversion_output_dir=""    # external accessible after call
     if [ -z "${file}" ]; then
-        ERROR "${ERR_MISSING_PARAMETER}"
+        echo "${ERR_MISSING_PARAMETER}"
         return 1 # empty file!
     else
         file_type=${file##*.} # set file type
@@ -767,6 +791,73 @@ function copy_files_over() {
     done
 }
 
+#############################
+# synchronize files
+#############################
+function fuzzy_counterpart_check() {
+    # @description check if a 'counterpart' file exists in another directory
+    # This will check if a folder has a counterpart file in another directory.
+    # The 'counterpart' file is a file which has the same name and path as the file it checks to.
+    # The fuzzy part is that the extension will not be checked.
+    # @param $1 from; the base folder
+    # @param $2 to; the folder to check
+    # @param $3 include hidden files/folders [true/false]
+    local base_directory=${1:-}
+    local check_directory=${2:-}
+    local hidden=${3:-}
+    local base_file=""
+    local check_file=""
+    local err_ret_code=0
+    local found_files=0
+    local find_param=""
+    local queue_check_file="fuzzy_counterpart_check"
+    # check directories
+    if [ -z "${base_directory}" ]; then
+        ERROR "the from/base directory parameter for the fuzzy counterpart check was not set"
+        return 1
+    fi
+    if [ -z "${check_directory}" ]; then
+        ERROR "the to/check directory parameter for the fuzzy counterpart check was not set"
+        return 1
+    fi
+    if [ ! -r "${base_directory}" ]; then # check base directory for read access
+        ERROR "the from/base directory for the fuzzy counterpart check cannot be read"
+        return 1
+    fi
+    if [ ! -w "${check_directory}" ]; then # check check directory for write access
+        ERROR "the to/check directory for the fuzzy counterpart check is not writable"
+        return 1
+    fi
+    # set hidden
+    if [ ! "${hidden}" = true ] ; then
+        find_param="*/\.*" # exclude hidden files/folders
+    fi
+    # find files of all types
+    find_files "${check_directory}" "*" "*" "${queue_check_file}" "${find_param}"
+
+    check_file=$(queue_read "${queue_check_file}")
+    while [ ! -z "${check_file}" ]; do
+        DEBUG "counterpart check: $check_file"
+        # - replace check dir with base dir
+        base_file=${check_file/$check_directory/$base_directory}
+        base_file="${base_file%.*}" # remove extension
+        DEBUG "counterpart check to: ${base_file}"
+        # - check if exists based on filename, ignoring all extension (fuzzy part)
+        found_files=$(ls ${base_file}.* 2> /dev/null | wc -l) || true
+        DEBUG "found counterpart files: ${found_files}"
+
+        if [ "${found_files}" -eq 0 ] ; then
+            DEBUG "file ${check_file} has no counterpart"
+            INFO "removing ${check_file}"
+            rm "${check_file}" || true # remove check file
+        else
+            DEBUG "file ${check_file} has counterpart"
+        fi
+        found_files=0
+        check_file=$(queue_read "${queue_check_file}")
+    done
+}
+
 function ctrl_c() {
     # @description do things when the SIGINT is trapped
     DEBUG "** Trapped CTRL-C"
@@ -808,9 +899,20 @@ INFO "starting the conversion process(es)"
 processes_start 'process_convert' "${JOBS}" "${CONVERTER_PROCESSES_QUEUE}"      # start the conversion processes
 
 wait || true                # wait for all child processes to finish
-NOTICE "done converting, copying over files"
+NOTICE "done converting"
+NOTICE "copying over files"
 INFO "copying over the following files: ${COPY_FILES[@]:-}"
 copy_files_over "${INPUT_DIR}" "${OUTPUT_DIR}" "${COPY_FILES[@]:-}"
+NOTICE "done copying"
+
+if [ "${COUNTERPART_SYNC}" = true ] ; then
+    NOTICE "checking for counterpart files"
+    if [ "${COUNTERPART_HIDDEN}" = true ] ; then
+        fuzzy_counterpart_check "${INPUT_DIR}" "${OUTPUT_DIR}" true
+    else
+        fuzzy_counterpart_check "${INPUT_DIR}" "${OUTPUT_DIR}" false
+    fi
+fi
 
 NOTICE "${APPNAME} is now done"
 
