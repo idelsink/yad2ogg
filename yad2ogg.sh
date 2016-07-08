@@ -321,7 +321,28 @@ function queue_read() {
     sed -i 1d $queue_file || true # remove first line of file
     echo "${queue_data}"
 }
-
+function queue_size() {
+    # @description returns the size of a queue
+    # @param $1 the queue name
+    # @return returns the size of a queue
+    local readonly queue_name_prefix="queue_"
+    local queue_name=${1:-}
+    local queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
+    local num_of_lines=0
+    num_of_lines=$(wc -l < "${queue_file}")
+    echo ${num_of_lines}
+}
+function queue_look_sl() {
+    # @description look in queue (single line)
+    # @param $1 the queue name
+    # @return returns the queue as a string with spaces
+    local readonly queue_name_prefix="queue_"
+    local queue_name=${1:-}
+    local queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
+    local queue=""
+    queue=$(tr '\n' ' ' < "${queue_file}")
+    echo "${queue}"
+}
 #############################
 # mutex interface
 #############################
@@ -381,7 +402,7 @@ function processes_start() {
     local function="${1:-}"
     local jobs=${2:-"1"}
     local identifier=${3:-"${function}"}
-    local queue_name="processes_pid_${identifier:-"default"}"
+    local queue_name="${identifier:-"default"}"
     local pid=""
     DEBUG "function: ${function}"
     DEBUG "jobs: ${jobs}"
@@ -403,7 +424,7 @@ function processes_signal() {
     # @param $2 signal (a signal used by the `kill` command) eg. SIGKILL, SIGTERM
     local identifier=${1:-}
     local signal=${2:-"SIGINT"}
-    local queue_name="processes_pid_${identifier:-"default"}"
+    local queue_name="${identifier:-"default"}"
     #pid=""
     pid=$(queue_read ${queue_name})
     while [ ! -z "${pid}" ]; do
@@ -424,7 +445,8 @@ function value_set() {
     # @param $1 variable name
     # @param $2 variable value
     local var_name=${1:-}
-    local var_value=${2:-}
+    shift
+    local var_value=${@:-}
     local readonly var_name_prefix="variable_"
     if [ -z "${var_name}" ]; then
         ERROR "missing variable name"
