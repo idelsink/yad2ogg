@@ -50,6 +50,8 @@ function PRINT_USAGE() {
     echo "    -h --help             Show usage"
     echo "    -V --version          Version"
     echo "    -v --verbose          Add more verbosity"
+    echo "    -g --gui              Use a simple gui (dialog)"
+    echo "                          will disable logging over stdout"
     echo "    -l --logfile file     Log to a file"
     echo "    -s --syslog param     Log to syslog \"logger 'param' log-message\""
     echo "    -i --input dir        Input/source directory"
@@ -93,10 +95,12 @@ VERBOSITY=$LOG_LEVEL_NOTICE # set starting log level
 LOG_FILE=""                 # file to log to (default empty, so disabled)
 SYSLOG_PARAM=""             # syslog parameters (default empty, so disabled)
 COPY_FILES=()               # files to copy over from the source directory
+USE_GUI=false               # use the GUI?
 KEEP_METADATA=true          # keep metadata(tags)
 OVERWRITE_EXISTING=false    # overwrite existing files
 COUNTERPART_SYNC=false      # synchronize
 COUNTERPART_HIDDEN=false    # include hidden files from counterpart check
+
 FILETYPES=()                # file types to convert
 # file types supported
 readonly SUPORTED_FILETYPES=(
@@ -125,9 +129,12 @@ readonly QUEUE_STORAGE="${APP_DIR}/queue"
 readonly VARIABLE_STORAGE="${APP_DIR}/variable_storage"
 
 # queues
-readonly FILES_TO_PROCESS_QUEUE="files_to_process"
-readonly FILES_TO_COPY_OVER_QUEUE="files_to_copy_over"
-readonly CONVERTER_PROCESSES_QUEUE="converter_processes"
+readonly FILES_TO_PROCESS_QUEUE="files_to_process"          # holds files to process
+readonly FILES_TO_COPY_OVER_QUEUE="files_to_copy_over"      # holds files to copy over
+readonly CONVERTER_PROCESSES_QUEUE="converter_processes"    # holds PID's of processes
+readonly GUI_PROCESSES_QUEUE="converter_status_processes"   # holds PID of the converter status
+readonly GUI_NOTIFICATIONS_QUEUE="gui_notifications"        # all notifications that need to be displayed in the UI
+
 # mutex names
 readonly MUTEX_READ_FILES_TO_PROCESS="get_convert_file"
 
@@ -136,6 +143,17 @@ readonly ERR_NO_MORE_FILES="no more files"
 readonly ERR_MISSING_PARAMETER="missing parameter"
 readonly ERR_MUTEX_TIMEOUT="mutex timeout"
 readonly ERR_TYPE_NOT_SUPORTED="type not supported"
+
+readonly GUI_TOTAL_COUNT="gui_total_count"
+readonly GUI_PART_COUNT="gui_part_count"
+readonly GUI_TITLE="gui_title"
+
+# Set alias
+shopt -s expand_aliases
+alias GUI_TITLE="value_set ${GUI_TITLE}"
+alias GUI_NOTIFY="queue_add ${GUI_NOTIFICATIONS_QUEUE}"
+alias GUI_TOTAL_COUNT="value_set ${GUI_TOTAL_COUNT}"
+alias GUI_PART_COUNT="value_set ${GUI_PART_COUNT}"
 
 # --- options processing --------------------------------------------
 if [ $# -eq 0 ] ; then  # nothing past to the script
@@ -148,6 +166,7 @@ for arg in "$@"; do     # transform long options to short ones
         "--help") set -- "$@" "-h" ;;
         "--version") set -- "$@" "-V" ;;
         "--verbose") set -- "$@" "-v" ;;
+        "--gui") set -- "$@" "-g" ;;
         "--logfile") set -- "$@" "-l" ;;
         "--syslog") set -- "$@" "-s" ;;
         "--input") set -- "$@" "-i" ;;
@@ -174,7 +193,7 @@ for arg in "$@"; do     # transform long options to short ones
   esac
 done
 # get options
-while getopts "hVvl:s:i:o:q:p:j:c:zZmwf:a" optname
+while getopts "hVvgl:s:i:o:q:p:j:c:zZmwf:a" optname
 do
     case "$optname" in
         "h")
@@ -187,6 +206,9 @@ do
             ;;
         "v")
             VERBOSITY=$(($VERBOSITY+100)) # increment log level
+            ;;
+        "g")
+            USE_GUI=true
             ;;
         "l")
             LOG_FILE="${OPTARG}"
@@ -550,6 +572,7 @@ function finish {
     # @description finish the program by cleaning up it's resources
     # clean app directory, if fail don't care
     # ^-- not needed, because using the /tmp directory
+    rm -r "${APP_DIR}"
     :
 }
 
@@ -701,6 +724,7 @@ function process_convert() {
     trap "terminate_process ${PROCESS_PID}" INT # on INT, let the task finish and then exit
     trap 'error ${LINENO}' ERR # on error, print error
     DEBUG "conversion process with PID: $PROCESS_PID started"
+    GUI_TITLE "Converting files"
     while true; do
         # get file to convert
         file=$(get_file_to_convert) || true # this can fail, just accept it
@@ -727,7 +751,8 @@ function process_convert() {
                 file_output_directory=${file/$INPUT_DIR/$OUTPUT_DIR} # change input for output dir
                 file_output_directory="${file_output_directory%/*}"  # directory part of file
                 INFO "processing: $(basename "$file")"
-
+                GUI_NOTIFY "$(basename "${file}")"
+                GUI_PART_COUNT $(queue_size "${FILES_TO_PROCESS_QUEUE}")
                 # make directory
                 if [ ! -d "${file_output_directory}" ]; then
                     mkdir -p "${file_output_directory}" || true
@@ -771,6 +796,94 @@ function process_convert() {
 }
 
 #############################
+# gui
+#############################
+function process_gui() {
+    local PROCESS_PID=$BASHPID
+    local files_to_process=$(queue_size "$FILES_TO_PROCESS_QUEUE")
+    local start_time=""
+    local end_time=""
+    local status_message=""
+    local notifications=()
+    local notification=""
+    local old_count=0
+    local gui_update="0.5" #sec
+    local term_update="2" #sec
+    #repecho() { for ((i=0; i<$1; ++i)); do echo -n "$2"; done; echo; }
+    #INFO "files to process: $files_to_process"
+    local totalcount=0
+    local partcount=0
+    local title=""
+    local message=""
+    local old_message=""
+    local percentage=0
+    local old_percentage=0
+    start_time=$(date +%s)
+    value_set "${PROCESS_PID}_TERMINATE" "false" # set default value
+    function terminate_process() {
+        local PROCESS_PID=${1:-}
+        value_set "${PROCESS_PID}_TERMINATE" "true" # set terminate variable
+    }
+    trap "terminate_process ${PROCESS_PID}" INT # on INT, let the task finish and then exit
+    trap 'error ${LINENO}' ERR # on error, print error
+    DEBUG "start GUI"
+    while true; do
+        partcount=$(value_get "${GUI_PART_COUNT}")
+        totalcount=$(value_get "${GUI_TOTAL_COUNT}")
+        title=$(value_get "${GUI_TITLE}")
+        #count=$(queue_size "$FILES_TO_PROCESS_QUEUE")
+        #if [ "${USE_GUI}" = true ]; then
+        notification=$(queue_read "${GUI_NOTIFICATIONS_QUEUE}")
+        while [ ! -z "${notification}" ]; do
+            notifications[0]="${notifications[1]:-}"
+            notifications[1]="${notifications[2]:-}"
+            notifications[2]="${notifications[3]:-}"
+            notifications[3]="${notification}"
+            notification=$(queue_read "${GUI_NOTIFICATIONS_QUEUE}")
+        done
+        if [ "${totalcount}" == 0 ]; then
+            percentage=0
+        elif [ -z "${partcount}" ] || [ -z "${totalcount}" ]; then
+            percentage=0
+        else
+            percentage=$(((totalcount-partcount)*100/totalcount))
+        fi
+        message="\n${notifications[0]:-}\n${notifications[1]:-}\n${notifications[2]:-}\n${notifications[3]:-}"
+        if [ "${USE_GUI}" = true ]; then
+            if [ "${percentage}" -ne "${old_percentage}" ] || [ ! "${message}" = "${old_message}" ]; then
+                echo $percentage  | dialog --title "${title}" --gauge "${message}" 10 70 0
+            fi
+            sleep $gui_update || true
+        else
+            NOTICE "${percentage}% | ${title}"
+            sleep $term_update || true
+        fi
+        TERMINATE=$(value_get ${PROCESS_PID}_TERMINATE) || true
+        if [ "${TERMINATE}" = true ]; then
+            end_time=$(date +%s)
+            time_diff=$(( $end_time-$start_time ))
+            start_time=$(date -d@$start_time '+%m/%d/%Y %H:%M:%S')
+            end_time=$(date -d@$end_time '+%m/%d/%Y %H:%M:%S')
+            #time_diff=$(date -d@$time_diff '+%m/%d/%Y %H:%M:%S')
+            message="Start time: $start_time\nEnd time:   $end_time\nTime taken: $(($time_diff / (60*60)))h:$(($time_diff / (60)))m:$(($time_diff % (60)))s"
+            if [ "${USE_GUI}" = true ]; then
+                echo 100  | dialog --title "${APPNAME} is now done" --gauge "${message}" 10 70 0
+            else
+                NOTICE "${APPNAME} is now done"
+                NOTICE "Start time: $start_time"
+                NOTICE "End time:   $end_time"
+                NOTICE "Time taken: $(($time_diff / (60*60)))h:$(($time_diff / (60)))m:$(($time_diff % (60)))s"
+            fi
+            break
+        fi
+        old_message=$message
+        old_percentage=$old_percentage
+    done
+    DEBUG "GUI stops now"
+    return 0
+}
+
+#############################
 # copy over files
 #############################
 function copy_files_over() {
@@ -787,6 +900,7 @@ function copy_files_over() {
     local err_ret_code=0
     local err_ret_message=""
     local readonly copy_queue="files_to_copy_over"
+    GUI_TITLE "Copying files over"
     DEBUG "source: $source"
     DEBUG "dest: $dest"
     DEBUG "files: ${files[@]}"
@@ -796,11 +910,15 @@ function copy_files_over() {
         filename="${filename%.*}"
         INFO "searching for the files to copy over"
         find_files "${source}" "${filename}" "${extension}" "${copy_queue}"
+        GUI_TOTAL_COUNT $(queue_size ${copy_queue})
+        GUI_PART_COUNT 0
         INFO "copying over files"
         # process queue
         file_to_process=$(queue_read ${copy_queue})
         while [ ! -z "${file_to_process}" ]; do
             DEBUG "copy file: ${file_to_process}"
+            GUI_NOTIFY ${file_to_process}
+            GUI_PART_COUNT $(queue_size ${copy_queue})
             file_output_directory=${file_to_process/$source/$dest} # change input for output dir
             file_output_directory="${file_output_directory%/*}"  # directory part of file
             # make directory
@@ -864,12 +982,17 @@ function fuzzy_counterpart_check() {
     if [ ! "${hidden}" = true ] ; then
         find_param="*/\.*" # exclude hidden files/folders
     fi
+    GUI_TITLE "Synchronize"
+    GUI_TOTAL_COUNT 0
+    GUI_PART_COUNT 0
     # find files of all types
     find_files "${check_directory}" "*" "*" "${queue_check_file}" "${find_param}"
-
+    GUI_TOTAL_COUNT $(queue_size ${queue_check_file})
     check_file=$(queue_read "${queue_check_file}")
     while [ ! -z "${check_file}" ]; do
         DEBUG "counterpart check: $check_file"
+        GUI_NOTIFY "${check_file}"
+        GUI_PART_COUNT $(queue_size "${queue_check_file}")
         # - replace check dir with base dir
         base_file="${check_file/$check_directory/$base_directory}"
         base_file="${base_file%.*}" # remove extension
@@ -925,16 +1048,32 @@ fi
 trap 'error ${LINENO}' ERR  # on error, print error
 trap finish EXIT            # on exit, clean up resources
 
-NOTICE "${APPNAME} v${VERSION}"
+# set stdio output for GUI
+if [ "${USE_GUI}" = true ]; then
+    B_LOG --stdout false
+else
+    B_LOG --stdout true
+fi
+
+# set default GUI values
+GUI_TITLE "${APPNAME} v${VERSION}"
+
+processes_start 'process_gui' "1" "${GUI_PROCESSES_QUEUE}"  # start the GUI
+
+# looking for files
 NOTICE "finding files and start conversion"
 INFO "looking for files with the filetypes: ${FILETYPES[*]:-}"
+GUI_TITLE "looking for files"
 find_files "${INPUT_DIR}" "*" "${FILETYPES[*]:-}" "${FILES_TO_PROCESS_QUEUE}"   # find the files needed for processing
-
+GUI_TOTAL_COUNT "$(queue_size "${FILES_TO_PROCESS_QUEUE}")"
+GUI_PART_COUNT 0
+# converting the files
 INFO "starting the conversion process(es)"
-processes_start 'process_convert' "${JOBS}" "${CONVERTER_PROCESSES_QUEUE}"      # start the conversion processes
+GUI_TITLE "starting the conversion process(es)"
+processes_start 'process_convert' "${JOBS}" "${CONVERTER_PROCESSES_QUEUE}"          # start the conversion processes
+wait $(queue_look_sl "${CONVERTER_PROCESSES_QUEUE}") || true                # wait for converter processes
 
-wait || true                # wait for all child processes to finish
-NOTICE "done converting"
+# copying over files
 NOTICE "copying over files"
 INFO "copying over the following files: ${COPY_FILES[@]:-}"
 copy_files_over "${INPUT_DIR}" "${OUTPUT_DIR}" "${COPY_FILES[@]:-}"
@@ -950,6 +1089,7 @@ if [ "${COUNTERPART_SYNC}" = true ] ; then
     fi
 fi
 
+processes_signal ${GUI_PROCESSES_QUEUE} 'SIGINT'
 NOTICE "${APPNAME} is now done"
-
+wait
 # --- done ----------------------------------------------------------
