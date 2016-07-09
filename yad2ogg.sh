@@ -44,49 +44,48 @@ source ${SCRIPT_PATH}/b-log/b-log.sh # include the log script
 VERSION=0.0.1
 APPNAME="yad2ogg"
 
-function PRINT_USAGE() {
+function usage() {
     # @description prints the short usage of the script
-    echo "Usage: yad2ogg.sh [options]"
-    echo "    -h --help             Show usage"
-    echo "    -V --version          Version"
-    echo "    -v --verbose          Add more verbosity"
-    echo "    -g --gui              Use a simple UI. (dialog)"
-    echo "                          will disable logging over stdout"
-    echo "    -l --logfile file     Log to a file"
-    echo "    -s --syslog param     Log to syslog \"logger 'param' log-message\""
-    echo "    -i --input dir        Input/source directory"
-    echo "    -o --output dir       Destination/output directory"
-    echo "    -q --quality n        Quality switch where n is a number"
-    echo "    -p --parameters param Extra conversion parameters"
-    echo "    -j --jobs n           Number of concurrent jobs"
+    echo "Usage: ${APPNAME}.sh [options]"
+    echo ""
+    echo "    -a --ALL              Convert all supported file types"
     echo "    -c --copyfile file    Copy files over from original directory to "
     echo "                          destination directory eg. '*.cue or *.jpg'."
+    echo "    -f --filetypes type   File types to convert eg. 'wav flac ...'"
+    echo "    -f 'alac' --ALAC      convert files of type alac"
+    echo "    -f 'flac' --FLAC      convert files of type flac"
+    echo "    -f 'mp3'  --MP3       convert files of type mp3"
+    echo "    -f 'm4a'  --M4A       convert files of type m4a"
+    echo "    -f 'ogg'  --OGG       convert files of type ogg"
+    echo "    -f 'wav'  --WAV       convert files of type wav"
+    echo "    -g --gui              Use a simple UI instead of logging output to stdout. (dialog)"
+    echo "    -h --help             Show usage"
+    echo "    -i --input dir        Input/source directory (defaults to current directory)"
+    echo "    -j --jobs n           Number of concurrent convert jobs (default is 1)"
+    echo "    -l --logfile file     Log to a file"
+    echo "    -m --metadata         Don't keep metadata(tags) from the original files"
+    echo "    -o --output dir       Destination/output directory (defaults to input directory)"
+    echo "    -p --parameters param Extra conversion parameters"
+    echo "    -q --quality n        Quality switch where n is a number (default 5.0)"
+    echo "    -s --syslog param     Log to syslog \"logger 'param' log-message\""
+    echo "                          For example: \"-s '-t my-awsome-tag'\" will result in:"
+    echo "                          \"logger -t my-awsome-tag log-message\""
+    echo "    -v --verbose          Add more verbosity"
+    echo "    -V --version          Displays the script version"
+    echo "    -w --overwrite        Overwrite existing files"
     echo "    -z --sync             Synchronize the output folder to the input folder."
     echo "                          If a file exists in the output folder but not in the "
     echo "                          input folder, it will be removed."
-    echo "                          Extension will be ignored so that a converted file"
+    echo "                          Extensions will be ignored so that a converted file"
     echo "                          will 'match' the original file"
     echo "    -Z --sync-hidden      Same as --sync but includes hidden files/folders"
-    echo "    -m --metadata         Don't keep metadata(tags) from the original files"
-    echo "    -w --overwrite        Overwrite existing files"
-    echo ""
-    echo "                          == Supported file types =="
-    echo "                          types of input files to process"
-    echo "    -f --filetypes type   File type eg. 'wav flac ...'"
-    echo "    -f 'wav'  --WAV"
-    echo "    -f 'flac' --FLAC"
-    echo "    -f 'alac' --ALAC"
-    echo "    -f 'mp3'  --MP3"
-    echo "    -f 'ogg'  --OGG"
-    echo "    -f 'm4a'  --M4A"
-    echo "    -a --ALL              All supported file types"
     echo ""
 }
 
 # --- global variables ----------------------------------------------
-INPUT_DIR='./'              # input directory
-OUTPUT_DIR='./'             # output directory
-QUALITY="5"                 # the quality for the converter switch
+INPUT_DIR="./"                  # input directory
+OUTPUT_DIR="${INPUT_DIR:-"./"}" # output directory
+QUALITY="5"                     # the quality for the converter switch
 # "Most users agree -q 5 achieves transparency, if the source is the original or lossless."
 # taken from: http://wiki.hydrogenaud.io/index.php?title=Recommended_Ogg_Vorbis
 PARAMETERS=""               # optional parameters for the converter
@@ -163,7 +162,7 @@ alias GUI_PART_COUNT="value_set ${GUI_PART_COUNT}"
 
 # --- options processing --------------------------------------------
 if [ $# -eq 0 ] ; then  # nothing past to the script
-    PRINT_USAGE
+    usage
     exit 1;
 fi
 for arg in "$@"; do     # transform long options to short ones
@@ -203,7 +202,7 @@ while getopts "hVvgl:s:i:o:q:p:j:c:zZmwf:a" optname
 do
     case "$optname" in
         "h")
-            PRINT_USAGE
+            usage
             exit 0;
             ;;
         "V")
