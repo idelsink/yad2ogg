@@ -50,7 +50,7 @@ function PRINT_USAGE() {
     echo "    -h --help             Show usage"
     echo "    -V --version          Version"
     echo "    -v --verbose          Add more verbosity"
-    echo "    -g --gui              Use a simple gui (dialog)"
+    echo "    -g --gui              Use a simple UI. (dialog)"
     echo "                          will disable logging over stdout"
     echo "    -l --logfile file     Log to a file"
     echo "    -s --syslog param     Log to syslog \"logger 'param' log-message\""
@@ -58,7 +58,7 @@ function PRINT_USAGE() {
     echo "    -o --output dir       Destination/output directory"
     echo "    -q --quality n        Quality switch where n is a number"
     echo "    -p --parameters param Extra conversion parameters"
-    echo "    -j --jobs 1           Number of concurrent jobs"
+    echo "    -j --jobs n           Number of concurrent jobs"
     echo "    -c --copyfile file    Copy files over from original directory to "
     echo "                          destination directory eg. '*.cue or *.jpg'."
     echo "    -z --sync             Synchronize the output folder to the input folder."
@@ -70,9 +70,9 @@ function PRINT_USAGE() {
     echo "    -m --metadata         Don't keep metadata(tags) from the original files"
     echo "    -w --overwrite        Overwrite existing files"
     echo ""
-    echo "                          =FILE TYPES="
+    echo "                          == Supported file types =="
     echo "                          types of input files to process"
-    echo "    -f --filetypes        File type eg. 'wav flac ...'"
+    echo "    -f --filetypes type   File type eg. 'wav flac ...'"
     echo "    -f 'wav'  --WAV"
     echo "    -f 'flac' --FLAC"
     echo "    -f 'alac' --ALAC"
@@ -144,11 +144,12 @@ readonly ERR_MISSING_PARAMETER="missing parameter"
 readonly ERR_MUTEX_TIMEOUT="mutex timeout"
 readonly ERR_TYPE_NOT_SUPORTED="type not supported"
 
+# variable access names
 readonly GUI_TITLE="gui_title"
 readonly GUI_TOTAL_COUNT="gui_total_count"
 readonly GUI_PART_COUNT="gui_part_count"
 
-# Set alias
+# set aliases
 shopt -s expand_aliases
 alias GUI_TITLE="value_set ${GUI_TITLE}"
 alias GUI_NOTIFY="queue_add ${GUI_NOTIFICATIONS_QUEUE}"
@@ -802,6 +803,7 @@ function process_convert() {
 # Graphical User Interface
 #############################
 function process_gui() {
+    # @description this displays the UI in terminal or via an UI interface called 'dialog'
     local PROCESS_PID=$BASHPID
     local start_time=""
     local end_time=""
@@ -883,8 +885,6 @@ function process_gui() {
         TERMINATE=$(value_get ${PROCESS_PID}_TERMINATE) || true
         if [ "${TERMINATE}" = true ]; then
             end_time=$(date +%s)
-            #time_diff=$(( $(date +%s)-$start_time ))
-            #printf -v time_taken "%02d:%02d:%02d" $(($time_diff/3600)) $(($time_diff%3600/60)) $(($time_diff%60))
             printf -v elapsed_time "%02d:%02d:%02d" \
                 $(($(( $end_time-$start_time ))/3600)) \
                 $(($(( $end_time-$start_time ))%3600/60)) \
@@ -1115,7 +1115,7 @@ INFO "copying over the following files: ${COPY_FILES[@]:-}"
 copy_files_over "${INPUT_DIR}" "${OUTPUT_DIR}" "${COPY_FILES[@]:-}"
 NOTICE "done copying"
 
-# syncing
+# syncing/counterpart checking files
 if [ "${COUNTERPART_SYNC}" = true ] ; then
     NOTICE "checking for counterpart files"
     if [ "${COUNTERPART_HIDDEN}" = true ] ; then
@@ -1125,7 +1125,8 @@ if [ "${COUNTERPART_SYNC}" = true ] ; then
     fi
 fi
 
+# stop the program
 processes_signal ${GUI_PROCESSES_QUEUE} 'SIGINT'
 NOTICE "${APPNAME} is now done"
-wait
+wait || true
 # --- done ----------------------------------------------------------
