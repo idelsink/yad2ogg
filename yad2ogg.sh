@@ -515,11 +515,11 @@ function find_files() {
     local ignore=${5:-}
     DEBUG "path: ${path}"
     DEBUG "filename: ${filename}"
-    DEBUG "filetypes: ${filetypes}"
+    DEBUG "filetypes: ${filetypes[@]:-}"
     DEBUG "queue name: ${queue_name}"
     DEBUG "ignore: ${ignore}"
     queue_init ${queue_name} true
-    for filetype in "${filetypes[@]}"; do
+    for filetype in "${filetypes[@]:-}"; do
         DEBUG "filetype: ${filetype}"
         find "${path}" -type f -name "${filename}.${filetype}" -not -path "${ignore}" -print0 | while IFS= read -r -d '' file; do
              queue_add "${queue_name}" "$file"
@@ -561,14 +561,15 @@ get_conversion_command() {
     # based on the file type.
     # the reason for this setup is so that the optimal command(s)
     # per file type can be selected
-    # @param $1 filename of the to converted file
+    # @param $1 input file
+    # @param $2 output file
     # @param $2 quality switch (integer)
     # @param $3 extra parameters for the conversion
     local file=${1:-}
-    local quality=${2:-5}
-    local parameters=${3:-}
+    local output_file=${2:-}
+    local quality=${3:-5}
+    local parameters=${4:-}
     local file_type=""
-    local output_file=""
     local conversion_command=()       # external accessible after call
     conversion_output_dir=""    # external accessible after call
     if [ -z "${file}" ]; then
@@ -577,7 +578,7 @@ get_conversion_command() {
     else
         file_type=${file##*.} # set file type
     fi
-    output_file=${file/$INPUT_DIR/$OUTPUT_DIR}  # change input for output dir
+    #output_file=${file/$INPUT_DIR/$OUTPUT_DIR}  # change input for output dir
     printf -v file "%q" "$file" # filter out special characters
     printf -v output_file "%q" "$output_file" # filter out special characters
     case $file_type in
@@ -587,7 +588,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         ${SUPORTED_FILETYPES[$FLAC_LIST]} )
             if [ "${KEEP_METADATA}" = true ] ; then
@@ -595,7 +596,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         ${SUPORTED_FILETYPES[$ALAC_LIST]} )
             if [ "${KEEP_METADATA}" = true ] ; then
@@ -603,7 +604,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         ${SUPORTED_FILETYPES[$MP3_LIST]} )
             if [ "${KEEP_METADATA}" = true ] ; then
@@ -611,8 +612,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
-
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         ${SUPORTED_FILETYPES[$OGG_LIST]} )
             if [ "${KEEP_METADATA}" = true ] ; then
@@ -620,7 +620,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         ${SUPORTED_FILETYPES[$M4A_LIST]} )
             if [ "${KEEP_METADATA}" = true ] ; then
@@ -628,7 +628,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file%.*}.ogg")
+            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         *)
             conversion_command=$ERR_TYPE_NOT_SUPORTED
@@ -688,6 +688,7 @@ function process_convert() {
     local PROCESS_PPID=$PPID
     local convert_command=""
     local file=""
+    local output_file=""
     local file_directory=""
     local file_output_directory=""
     local err_ret_code=0
@@ -712,12 +713,16 @@ function process_convert() {
         elif [ "$file" == "$ERR_MUTEX_TIMEOUT" ]; then
             NOTICE "$PROCESS_PID| mutex timeout" # retry
         else
+            output_file=${file/$INPUT_DIR/$OUTPUT_DIR}  # change input for output dir
+            output_file="${output_file%.*}.ogg" # replace extension
             # get convert command
-            convert_command=$(get_conversion_command "${file}" "${QUALITY}" "${PARAMETERS}") || true
+            convert_command=$(get_conversion_command "${file}" "${output_file}" "${QUALITY}" "${PARAMETERS}") || true
             if [ -z "${convert_command}" ]; then
                 WARN "got no command to run"
             elif [ "${convert_command}" == "${ERR_MISSING_PARAMETER}" ]; then
                 WARN "missing parameters"
+            elif [ "${convert_command}" ==  "${ERR_TYPE_NOT_SUPORTED}" ]; then
+                ERROR "type not supported"
             else
                 file_output_directory=${file/$INPUT_DIR/$OUTPUT_DIR} # change input for output dir
                 file_output_directory="${file_output_directory%/*}"  # directory part of file
@@ -743,11 +748,16 @@ function process_convert() {
                     # command return error
                     if [[ "${err_ret_message}" =~ (^File .* already exists. Exiting.$) ]]; then
                         DEBUG "file already exists, skipping ${file}"
-                        err_ret_message=""
                     else
-                        ERROR "error while processing: $file"
-                        DEBUG "return code of command is: $err_ret_code"
+                        ERROR "error while processing: ${file}"
+                        INFO "error message: ${err_ret_message}"
+                        INFO "return code of command is: $err_ret_code"
+                        # remove failed file
+                        INFO "removing failed file: ${output_file}"
+                        rm "${output_file}" || true
                     fi
+                    err_ret_message=""
+                    err_ret_code=0
                 fi
             fi
         fi
@@ -861,11 +871,11 @@ function fuzzy_counterpart_check() {
     while [ ! -z "${check_file}" ]; do
         DEBUG "counterpart check: $check_file"
         # - replace check dir with base dir
-        base_file=${check_file/$check_directory/$base_directory}
+        base_file="${check_file/$check_directory/$base_directory}"
         base_file="${base_file%.*}" # remove extension
         DEBUG "counterpart check to: ${base_file}"
         # - check if exists based on filename, ignoring all extension (fuzzy part)
-        found_files=$(ls ${base_file}.* 2> /dev/null | wc -l) || true
+        found_files=$(ls "${base_file}".* 2> /dev/null | wc -l) || true
         DEBUG "found counterpart files: ${found_files}"
 
         if [ "${found_files}" -eq 0 ] ; then
@@ -878,6 +888,9 @@ function fuzzy_counterpart_check() {
         found_files=0
         check_file=$(queue_read "${queue_check_file}")
     done
+    # remove empty directories
+    DEBUG "removing empty directories"
+    find "${check_directory}" -type d -empty -delete
 }
 
 function ctrl_c() {
@@ -885,21 +898,20 @@ function ctrl_c() {
     DEBUG "** Trapped CTRL-C"
     INFO "requested termination"
     processes_signal ${CONVERTER_PROCESSES_QUEUE} 'SIGINT'
+    processes_signal ${GUI_PROCESSES_QUEUE} 'SIGINT'
     wait || true                # wait for all child processes to finish
     exit 1
 }
 trap 'ctrl_c' INT
 
 # --- main ----------------------------------------------------------
-
-#############################
 # logger setup
-#############################
-B_LOG --stdout true   # log over STDIO
+B_LOG --stdout true
 B_LOG --file "${LOG_FILE}" --file-prefix-enable --file-suffix-enable # log in a file
 B_LOG --syslog "${SYSLOG_PARAM}" # log to syslog
 B_LOG --log-level ${VERBOSITY} # set log level
 
+# check folders
 if [ ! -r "${INPUT_DIR}" ]; then    # check input directory for read access
     FATAL "the input directory cannot be read"
     exit 1
@@ -909,6 +921,7 @@ if [ ! -w "${OUTPUT_DIR}" ]; then   # check output directory for write access
     exit 1
 fi
 
+# set traps
 trap 'error ${LINENO}' ERR  # on error, print error
 trap finish EXIT            # on exit, clean up resources
 
@@ -927,6 +940,7 @@ INFO "copying over the following files: ${COPY_FILES[@]:-}"
 copy_files_over "${INPUT_DIR}" "${OUTPUT_DIR}" "${COPY_FILES[@]:-}"
 NOTICE "done copying"
 
+# syncing
 if [ "${COUNTERPART_SYNC}" = true ] ; then
     NOTICE "checking for counterpart files"
     if [ "${COUNTERPART_HIDDEN}" = true ] ; then
