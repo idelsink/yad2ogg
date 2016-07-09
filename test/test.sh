@@ -34,6 +34,10 @@ if [ ! -w "${OUTPUT_DIR}" ]; then   # check output directory for write access
     fi
 fi
 
+echo ""
+echo "This script will first generate some sample audio files"
+read -rsp $'Press any key to continue...\n' -n1 key
+
 # generate some audio files
 ${SCRIPT_PATH}/generate_test_files.sh -o "${INPUT_DIR}/" -t 10 -f 500
 $SCRIPT_PATH/generate_test_files.sh -o "${INPUT_DIR}/" -t 100 -f 1000
@@ -45,9 +49,15 @@ touch ${INPUT_DIR}/another_random_image_file.png
 touch ${INPUT_DIR}/cover.jpg
 touch ${INPUT_DIR}/cover.png
 
-# start script
+clear
+read -rsp $'Press any key to start the tool in terminal mode...\n' -n1 key
+clear
 ${SCRIPT_PATH}/../yad2ogg.sh --input "${INPUT_DIR}/" --output "${OUTPUT_DIR}/" --ALL --verbose --overwrite --copyfile 'cover.jpg'
+
+read -rsp $'Press any key to start the tool in GUI mode...\n' -n1 key
+clear
 ${SCRIPT_PATH}/../yad2ogg.sh --input "${INPUT_DIR}/" --output "${OUTPUT_DIR}/" --ALL --verbose --overwrite --copyfile 'cover.jpg' --gui
 
 # conclusion
+echo ""
 echo "In the output folder, only the ogg version of the audio files and all the cover.jpg files are placed"
