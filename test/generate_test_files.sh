@@ -33,10 +33,15 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #########################################################################
+# include guard
+# yad2ogg_gen_test_files
+[ -n "${YAD2OGG_GEN_TEST_FILES_SH+x}" ] && return || readonly YAD2OGG_GEN_TEST_FILES_SH=1
+
 # global parameters
-set -e          # kill script if a command fails
-set -o nounset  # unset values give error
-set -o pipefail # prevents errors in a pipeline from being masked
+# default disable these settings
+#set -e          # kill script if a command fails
+#set -o nounset  # unset values give error
+#set -o pipefail # prevents errors in a pipeline from being masked
 
 VERSION=0.0.1
 APPNAME="yad2ogg_gen_test_files"
