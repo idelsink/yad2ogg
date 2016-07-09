@@ -47,6 +47,7 @@ touch ${INPUT_DIR}/cover.png
 
 # start script
 ${SCRIPT_PATH}/../yad2ogg.sh --input "${INPUT_DIR}/" --output "${OUTPUT_DIR}/" --ALL --verbose --overwrite --copyfile 'cover.jpg'
+${SCRIPT_PATH}/../yad2ogg.sh --input "${INPUT_DIR}/" --output "${OUTPUT_DIR}/" --ALL --verbose --overwrite --copyfile 'cover.jpg' --gui
 
 # conclusion
 echo "In the output folder, only the ogg version of the audio files and all the cover.jpg files are placed"
