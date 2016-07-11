@@ -443,7 +443,7 @@ This resulted in the following output:
 
 So with this test, I tested if it could handle my 'large' library.
 I also tested the time it took and if the usage of the GUI had any influence.
-For the results `11:09:39` vs `11:30:31` is not a bad outcome.
+For the results `11:09:39` vs `11:30:31` is not a bad outcome.
 Remember that this is over the network, so your mileage may very.
 
 ## Feedback
