@@ -78,7 +78,15 @@ switched out and, if necessary switched out entirely on a file type basis.
 
 To install and use this tool,
 make sure that you've installed the necessary dependencies.
-Listed [here](#dependencies).
+Listed [here](#dependencies).  
+After that, clone and `cd` into the directory.
+
+```sh
+git clone https://github.com/idelsink/yad2ogg.git
+cd yad2ogg
+```
+
+For starters, the test script can be run with `./test/test.sh`.
 
 ## Usage
 
