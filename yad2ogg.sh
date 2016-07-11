@@ -463,7 +463,7 @@ function processes_signal() {
     while [ ! -z "${pid}" ]; do
         # check if pid exists
         if [ -n "$(ps -p $pid -o pid=)" ]; then
-           kill -${signal} $pid
+           kill -${signal} $pid || true
            DEBUG "signaled process with PID: ${pid}"
         fi
         pid=$(queue_read ${queue_name})
@@ -760,7 +760,7 @@ function process_convert() {
                 file_output_directory=${file/$INPUT_DIR/$OUTPUT_DIR} # change input for output dir
                 file_output_directory="${file_output_directory%/*}"  # directory part of file
                 INFO "processing: $(basename "$file")"
-                GUI_NOTIFY "$(basename "${file}")"
+                GUI_NOTIFY "${file}"
                 GUI_PART_COUNT $(queue_size "${FILES_TO_PROCESS_QUEUE}")
                 # make directory
                 if [ ! -d "${file_output_directory}" ]; then
@@ -828,6 +828,9 @@ function process_gui() {
     local percentage=0
     local gui_update="0.5" #sec
     local term_update="10" #sec
+    local terminal_width=$(tput cols) || true
+    terminal_width=$(((${terminal_width:-200} / 10)*8)) # about 80%
+    export DIALOGRC="${SCRIPT_PATH}/.dialogrc" # export rc file
     start_time=$(date +%s)
     value_set "${PROCESS_PID}_TERMINATE" "false" # set default value
     function terminate_process() {
@@ -881,7 +884,7 @@ function process_gui() {
                 message+="${notifications[3]:-}\n"
                 message+="\n"
                 message+="\ZbElapsed time since start: $elapsed_time\Zn"
-                echo $percentage  | dialog --colors --title "${title}" --gauge "${message}" 14 100 0
+                echo $percentage  | dialog --colors --title "${title}" --gauge "${message}" 14 ${terminal_width:-100} 0
                 sleep $gui_update || true
             else
                 sleep $term_update || true
@@ -898,7 +901,7 @@ function process_gui() {
             end_time=$(date -d@$end_time '+%m/%d/%Y %H:%M:%S') || true
             message="\nStart time: $start_time\nEnd time:   $end_time\nTime taken: ${elapsed_time}"
             if [ "${USE_GUI}" = true ]; then
-                echo 100  | dialog --title "${APPNAME} is now done" --gauge "${message}" 14 100 0
+                echo 100  | dialog --title "${APPNAME} is now done" --gauge "${message}" 14 ${terminal_width:-100} 0
             fi
             NOTICE "${APPNAME} is now done"
             NOTICE "Start time: $start_time"
@@ -1065,6 +1068,8 @@ function ctrl_c() {
 trap 'ctrl_c' INT
 
 # --- main ----------------------------------------------------------
+GUI_PID=0
+
 # logger setup
 B_LOG --stdout true
 B_LOG --file "${LOG_FILE}" --file-prefix-enable --file-suffix-enable # log in a file
@@ -1096,7 +1101,8 @@ fi
 GUI_TITLE "${APPNAME} v${VERSION}"
 GUI_NOTIFY_CLEAR
 
-processes_start 'process_gui' "1" "${GUI_PROCESSES_QUEUE}"  # start the GUI
+process_gui& # start the GUI
+GUI_PID=$!
 
 # looking for files
 NOTICE "finding files and start conversion"
@@ -1131,7 +1137,7 @@ if [ "${COUNTERPART_SYNC}" = true ] ; then
 fi
 
 # stop the program
-processes_signal ${GUI_PROCESSES_QUEUE} 'SIGINT'
+kill -SIGTERM "${GUI_PID}"
 NOTICE "${APPNAME} is now done"
 wait || true
 # --- done ----------------------------------------------------------
