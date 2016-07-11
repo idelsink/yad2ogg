@@ -51,6 +51,8 @@ function usage() {
     echo "    -a --ALL              Convert all supported file types"
     echo "    -c --copyfile file    Copy files over from original directory to "
     echo "                          destination directory eg. '*.cue or *.jpg'."
+    echo "    -C --command          The default convert command. (default: ffmpeg)"
+    echo "                          When ffmpeg is not available, this can be set to avconf"
     echo "    -f --filetypes type   File types to convert eg. 'wav flac ...'"
     echo "    -f 'alac' --ALAC      convert files of type alac"
     echo "    -f 'flac' --FLAC      convert files of type flac"
@@ -99,7 +101,7 @@ KEEP_METADATA=true          # keep metadata(tags)
 OVERWRITE_EXISTING=false    # overwrite existing files
 COUNTERPART_SYNC=false      # synchronize
 COUNTERPART_HIDDEN=false    # include hidden files from counterpart check
-
+DEFAULT_CONV_COMM="ffmpeg"  # default convert command
 FILETYPES=()                # file types to convert
 # file types supported
 readonly SUPORTED_FILETYPES=(
@@ -183,6 +185,7 @@ for arg in "$@"; do     # transform long options to short ones
         "--sync-hidden") set -- "$@" "-Z" ;;
         "--metadata") set -- "$@" "-m" ;;
         "--overwrite") set -- "$@" "-w" ;;
+        "--command") set -- "$@" "-C" ;;
         # filetypes
         "--filetypes") set -- "$@" "-f" ;;
         "--ALL") set -- "$@" "-a" ;;
@@ -198,7 +201,7 @@ for arg in "$@"; do     # transform long options to short ones
   esac
 done
 # get options
-while getopts "hVvgl:s:i:o:q:p:j:c:zZmwf:a" optname
+while getopts "hVvgl:s:i:o:q:p:j:c:C:zZmwf:a" optname
 do
     case "$optname" in
         "h")
@@ -238,6 +241,9 @@ do
             ;;
         "c")
             COPY_FILES[${#COPY_FILES[@]}]="${OPTARG}"
+            ;;
+        "C")
+            DEFAULT_CONV_COMM="${OPTARG}"
             ;;
         "z")
             COUNTERPART_SYNC=true
@@ -614,7 +620,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
+            conversion_command=("${DEFAULT_CONV_COMM}" -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         ${SUPORTED_FILETYPES[$FLAC_LIST]} )
             if [ "${KEEP_METADATA}" = true ] ; then
@@ -622,7 +628,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
+            conversion_command=("${DEFAULT_CONV_COMM}" -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         ${SUPORTED_FILETYPES[$ALAC_LIST]} )
             if [ "${KEEP_METADATA}" = true ] ; then
@@ -630,7 +636,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
+            conversion_command=("${DEFAULT_CONV_COMM}" -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         ${SUPORTED_FILETYPES[$MP3_LIST]} )
             if [ "${KEEP_METADATA}" = true ] ; then
@@ -638,7 +644,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
+            conversion_command=("${DEFAULT_CONV_COMM}" -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         ${SUPORTED_FILETYPES[$OGG_LIST]} )
             if [ "${KEEP_METADATA}" = true ] ; then
@@ -646,7 +652,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
+            conversion_command=("${DEFAULT_CONV_COMM}" -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         ${SUPORTED_FILETYPES[$M4A_LIST]} )
             if [ "${KEEP_METADATA}" = true ] ; then
@@ -654,7 +660,7 @@ get_conversion_command() {
             else
                 parameters+=' -map_metadata -1'
             fi
-            conversion_command=(ffmpeg -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
+            conversion_command=("${DEFAULT_CONV_COMM}" -i "${file}" -acodec libvorbis -aq "${quality}" "${parameters}" "${output_file}")
             ;;
         *)
             conversion_command=$ERR_TYPE_NOT_SUPORTED
