@@ -1,10 +1,10 @@
 # yad2ogg
 
 **[yad2ogg](https://github.com/idelsink/yad2ogg)** converts all the specified
-audio files into ogg-vorbis format from a given directory to another directory.
+audio files into ogg-vorbis format.  
+This tool will process, copy and synchronize where needed
+from the input directory to output directory.  
 Based on the idea of [dir2ogg](http://jak-linux.org/projects/dir2ogg/).  
-The idea behind this tools is to convert a complete directory
-and all of it's subfolders to the open source ogg-vorbis format.
 
 The name **yad2ogg** stands for: *Yet Another Directory to `ogg`*.
 
@@ -244,12 +244,11 @@ but for completions sake this was put in.
 
 ### Verbosity / logging
 
-Some tool like this that needs to run for hours needs some logging.
 With the `-v` or `--verbose` flag, more verbosity can be added to the tool.
-This can be logged into a file or syslog, which I recommend,
+This can be logged into a file or syslog
 or print out to the terminal via `stdout`.  
-Keep in mind that when using the UI, logging to `stdout` is disabled.  
-This tool is using a logger called [b-log](https://github.com/idelsink/b-log)
+Keep in mind that when using the GUI, logging to `stdout` is disabled.  
+The logging library used is [b-log](https://github.com/idelsink/b-log)
 for the people who are interested.
 
 ### User interface
@@ -312,7 +311,7 @@ This is because it writes the converted files to that directory of course.
 
 At this moment it uses the following tools:
 
--   ffmpeg, for converting the files
+-   ffmpeg, for converting the files (or avconv if ffmpeg is not available)
 -   dialog, for the GUI (if not installed, the terminal mode is still available)
 
 ## Warning
@@ -403,19 +402,19 @@ For the terminal I got the following results.
 This resulted in the following output:
 
 ```text
-[2016-07-10 00:44:43.533][INFO  ][main:109] looking for files with the filetypes: wav flac alac mp3 ogg m4a
-[2016-07-10 00:44:53.582][NOTICE][process_gui:867] Elapsed time: 00:00:10 | 0% | looking for files to convert | 
-...
-[2016-07-10 00:46:03.672][NOTICE][process_gui:867] Elapsed time: 00:01:20 | 0% | looking for files to convert | 
-[2016-07-10 00:46:05.621][INFO  ][main:110] starting the conversion process(es)
-...
-[2016-07-10 00:46:13.874][NOTICE][process_gui:867] Elapsed time: 00:01:30 | 0% | Converting files | 12625 out of 12630 left to process.
+[2016-07-10 00:44:43.533][INFO  ][main:109] looking for files with the filetypes: wav flac alac mp3 ogg m4a
+[2016-07-10 00:44:53.582][NOTICE][process_gui:867] Elapsed time: 00:00:10 | 0% | looking for files to convert |
 ...
-[2016-07-10 11:54:15.364][NOTICE][main:112] yad2ogg is now done
-[2016-07-10 11:54:22.923][NOTICE][process_gui:897] yad2ogg is now done
-[2016-07-10 11:54:22.933][NOTICE][process_gui:898] Start time: 07/10/2016 00:44:43
-[2016-07-10 11:54:22.943][NOTICE][process_gui:899] End time:   07/10/2016 11:54:22
-[2016-07-10 11:54:22.957][NOTICE][process_gui:900] Time taken: 11:09:39
+[2016-07-10 00:46:03.672][NOTICE][process_gui:867] Elapsed time: 00:01:20 | 0% | looking for files to convert |
+[2016-07-10 00:46:05.621][INFO  ][main:110] starting the conversion process(es)
+...
+[2016-07-10 00:46:13.874][NOTICE][process_gui:867] Elapsed time: 00:01:30 | 0% | Converting files | 12625 out of 12630 left to process.
+...
+[2016-07-10 11:54:15.364][NOTICE][main:112] yad2ogg is now done
+[2016-07-10 11:54:22.923][NOTICE][process_gui:897] yad2ogg is now done
+[2016-07-10 11:54:22.933][NOTICE][process_gui:898] Start time: 07/10/2016 00:44:43
+[2016-07-10 11:54:22.943][NOTICE][process_gui:899] End time:   07/10/2016 11:54:22
+[2016-07-10 11:54:22.957][NOTICE][process_gui:900] Time taken: 11:09:39
 ```
 
 For the GUI I got the following results.
@@ -427,19 +426,19 @@ For the GUI I got the following results.
 This resulted in the following output:
 
 ```text
-[37m[2016-07-10 12:38:45.832][INFO  ][main:109] looking for files with the filetypes: wav flac alac mp3 ogg m4a
-[1;32m[2016-07-10 12:38:55.003][NOTICE][process_gui:867] Elapsed time: 00:00:10 | 0% | looking for files to convert | 
+[2016-07-10 12:38:45.832][INFO  ][main:109] looking for files with the filetypes: wav flac alac mp3 ogg m4a
+[2016-07-10 12:38:55.003][NOTICE][process_gui:867] Elapsed time: 00:00:10 | 0% | looking for files to convert |
 ...
-[1;32m[2016-07-10 12:40:45.006][NOTICE][process_gui:867] Elapsed time: 00:02:00 | 0% | looking for files to convert | 
-[37m[2016-07-10 12:40:48.955][INFO  ][main:110] starting the conversion process(es)
+[2016-07-10 12:40:45.006][NOTICE][process_gui:867] Elapsed time: 00:02:00 | 0% | looking for files to convert |
+[2016-07-10 12:40:48.955][INFO  ][main:110] starting the conversion process(es)
 ...
-[1;32m[2016-07-10 12:40:55.026][NOTICE][process_gui:867] Elapsed time: 00:02:10 | 0% | Converting files | 12607 out of 12630 left to process.
+[2016-07-10 12:40:55.026][NOTICE][process_gui:867] Elapsed time: 00:02:10 | 0% | Converting files | 12607 out of 12630 left to process.
 ...
-[2016-07-11 00:09:16.734][NOTICE][main:112] yad2ogg is now done
-[2016-07-11 00:09:17.009][NOTICE][process_gui:897] yad2ogg is now done
-[2016-07-11 00:09:17.015][NOTICE][process_gui:898] Start time: 07/10/2016 12:38:45
-[2016-07-11 00:09:17.021][NOTICE][process_gui:899] End time:   07/11/2016 00:09:16
-[2016-07-11 00:09:17.026][NOTICE][process_gui:900] Time taken: 11:30:31
+[2016-07-11 00:09:16.734][NOTICE][main:112] yad2ogg is now done
+[2016-07-11 00:09:17.009][NOTICE][process_gui:897] yad2ogg is now done
+[2016-07-11 00:09:17.015][NOTICE][process_gui:898] Start time: 07/10/2016 12:38:45
+[2016-07-11 00:09:17.021][NOTICE][process_gui:899] End time:   07/11/2016 00:09:16
+[2016-07-11 00:09:17.026][NOTICE][process_gui:900] Time taken: 11:30:31
 ```
 
 So with this test, I tested if it could handle my 'large' library.
