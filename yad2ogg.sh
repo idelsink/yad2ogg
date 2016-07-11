@@ -52,7 +52,7 @@ function usage() {
     echo "    -c --copyfile file    Copy files over from original directory to "
     echo "                          destination directory eg. '*.cue or *.jpg'."
     echo "    -C --command          The default convert command. (default: ffmpeg)"
-    echo "                          When ffmpeg is not available, this can be set to avconf"
+    echo "                          When ffmpeg is not available, this can be set to avconv"
     echo "    -f --filetypes type   File types to convert eg. 'wav flac ...'"
     echo "    -f 'alac' --ALAC      convert files of type alac"
     echo "    -f 'flac' --FLAC      convert files of type flac"

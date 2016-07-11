@@ -89,7 +89,7 @@ Usage: yad2ogg.sh [options]
     -c --copyfile file    Copy files over from original directory to
                           destination directory eg. '*.cue or *.jpg'.
     -C --command          The default convert command. (default: ffmpeg)
-                          When ffmpeg is not available, this can be set to avconf
+                          When ffmpeg is not available, this can be set to avconv
     -f --filetypes type   File types to convert eg. 'wav flac ...'
     -f 'alac' --ALAC      convert files of type alac
     -f 'flac' --FLAC      convert files of type flac
