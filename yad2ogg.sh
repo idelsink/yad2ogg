@@ -1,8 +1,8 @@
 #!/bin/bash
 #########################################################################
 # Script Name: yad2ogg
-# Script Version: 0.0.1
-# Script Date: 23 June 2016
+# Script Version: 1.0.0
+# Script Date: 12 Juli 2016
 #########################################################################
 #
 # Based on the idea of dir2ogg
@@ -41,7 +41,7 @@ set -o pipefail # prevents errors in a pipeline from being masked
 SCRIPT_PATH=${0%/*}
 source ${SCRIPT_PATH}/b-log/b-log.sh # include the log script
 
-VERSION=0.0.1
+VERSION=1.0.0
 APPNAME="yad2ogg"
 
 function usage() {
