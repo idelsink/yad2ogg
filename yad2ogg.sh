@@ -39,7 +39,9 @@ set -o nounset  # unset values give error
 set -o pipefail # prevents errors in a pipeline from being masked
 # --- include files -------------------------------------------------
 SCRIPT_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SCRIPT_PATH_LOCAL="${SCRIPT_PATH}"
 LIBS_PATH="${SCRIPT_PATH}/libs"
+LIBS_PATH_LOCAL="${SCRIPT_PATH}"
 source "${LIBS_PATH}/b-log/b-log.sh"    # logging
 source "${LIBS_PATH}/queue.sh"          # simple queue interface
 source "${LIBS_PATH}/mutex.sh"          # simple mutex interface
@@ -548,7 +550,7 @@ function process_gui() {
     local term_update="10" #sec
     local terminal_width=$(tput cols) || true
     terminal_width=$(((${terminal_width:-200} / 10)*8)) # about 80%
-    export DIALOGRC="${SCRIPT_PATH}/.dialogrc" # export rc file
+    export DIALOGRC="${SCRIPT_PATH_LOCAL}/.dialogrc" # export rc file
     start_time=$(date +%s)
     value_set "${PROCESS_PID}_TERMINATE" "false" # set default value
     function terminate_process() {
