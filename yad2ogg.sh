@@ -730,7 +730,7 @@ function process_convert() {
         local PROCESS_PID=${1:-}
         value_set "${PROCESS_PID}_TERMINATE" "true" # set terminate variable
     }
-    trap "terminate_process ${PROCESS_PID}" INT # on INT, let the task finish and then exit
+    trap "terminate_process ${PROCESS_PID}" TERM INT # on INT, let the task finish and then exit
     trap 'error ${LINENO}' ERR # on error, print error
     DEBUG "conversion process with PID: $PROCESS_PID started"
     GUI_TITLE "Converting files"
@@ -779,15 +779,15 @@ function process_convert() {
 
                 # check return code of process
                 if [ ! "${err_ret_code}" = 0 ] ; then
-                    # command return error
+                    # command returned error
                     if [[ "${err_ret_message}" =~ (^File .* already exists. Exiting.$) ]]; then
                         DEBUG "file already exists, skipping ${file}"
                     else
                         ERROR "error while processing: ${file}"
                         INFO "error message: ${err_ret_message}"
-                        INFO "return code of command is: $err_ret_code"
+                        INFO "return code of command was: $err_ret_code"
                         # remove failed file
-                        INFO "removing failed file: ${output_file}"
+                        INFO "removing file because conversion failed: ${output_file}"
                         rm "${output_file}" || true
                     fi
                     err_ret_message=""
@@ -834,10 +834,11 @@ function process_gui() {
     start_time=$(date +%s)
     value_set "${PROCESS_PID}_TERMINATE" "false" # set default value
     function terminate_process() {
+        DEBUG "set GUI term value"
         local PROCESS_PID=${1:-}
         value_set "${PROCESS_PID}_TERMINATE" "true" # set terminate variable
     }
-    trap "terminate_process ${PROCESS_PID}" INT # on INT, let the task finish and then exit
+    trap "terminate_process ${PROCESS_PID}" TERM INT # on TERM or INT, let the task finish and then exit
     trap 'error ${LINENO}' ERR # on error, print error
     DEBUG "start GUI"
     while true; do
@@ -1061,7 +1062,6 @@ function ctrl_c() {
     DEBUG "** Trapped CTRL-C"
     INFO "requested termination"
     processes_signal ${CONVERTER_PROCESSES_QUEUE} 'SIGINT'
-    processes_signal ${GUI_PROCESSES_QUEUE} 'SIGINT'
     wait || true                # wait for all child processes to finish
     exit 1
 }
@@ -1137,7 +1137,7 @@ if [ "${COUNTERPART_SYNC}" = true ] ; then
 fi
 
 # stop the program
-kill -SIGTERM "${GUI_PID}"
 NOTICE "${APPNAME} is now done"
+kill -SIGTERM "${GUI_PID}"      # stop GUI
 wait || true
 # --- done ----------------------------------------------------------
