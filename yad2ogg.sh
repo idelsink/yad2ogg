@@ -33,14 +33,21 @@
 # Explanation
 # yad2ogg -i input_folder -o destination --copyfile "cover.jpg"
 #########################################################################
-# global parameters
+# --- global parameters ---------------------------------------------
 set -e          # kill script if a command fails
 set -o nounset  # unset values give error
 set -o pipefail # prevents errors in a pipeline from being masked
+# --- include files -------------------------------------------------
+SCRIPT_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+LIBS_PATH="${SCRIPT_PATH}/libs"
+source "${LIBS_PATH}/b-log/b-log.sh"    # logging
+source "${LIBS_PATH}/queue.sh"          # simple queue interface
+source "${LIBS_PATH}/mutex.sh"          # simple mutex interface
+source "${LIBS_PATH}/processes.sh"      # simple concurrent process management
+source "${LIBS_PATH}/value-storage.sh"  # global value storage interface
+source "${LIBS_PATH}/find-files.sh"     # find files
 
-SCRIPT_PATH=${0%/*}
-source ${SCRIPT_PATH}/b-log/b-log.sh # include the log script
-
+# --- global variables ----------------------------------------------
 VERSION=1.0.0
 APPNAME="yad2ogg"
 
@@ -84,7 +91,6 @@ function usage() {
     echo ""
 }
 
-# --- global variables ----------------------------------------------
 INPUT_DIR="./"                  # input directory
 OUTPUT_DIR="${INPUT_DIR:-"./"}" # output directory
 QUALITY="5"                     # the quality for the converter switch
@@ -273,294 +279,6 @@ done
 shift "$((OPTIND-1))" # shift out all the already processed options
 
 # --- start body ----------------------------------------------------
-#############################
-# queue interface
-#############################
-# use and manage a simple fifo queue
-# in a local file system
-# - init 'queue name' 'clear existing'
-# - add 'queue name' 'data'
-# - read 'queue name' [returns via echo]
-function queue_init() {
-    # @description init the fifo queue, can be called throughout the script
-    # @param $1 the queue name
-    # @param $2 clear the queue [default false]
-    # make file in QUEUE_STORAGE with name of 'queue_name'
-    local readonly queue_name_prefix="queue_"
-    local queue_name=${1:-}
-    local clear_queue=false
-    if [ -z "$queue_name" ]; then
-        FATAL "missing queue name"
-        exit 1
-    fi
-    if [ -z "${2:-}" ]; then
-        clear_queue=false
-    elif [ "$2" == "true" ]; then
-        clear_queue=true
-    fi
-    local readonly queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
-    # check folder location
-    if [ ! -d "$QUEUE_STORAGE" ]; then
-        mkdir -p "$QUEUE_STORAGE"
-        if [ $? -ne 0 ] ; then
-            FATAL "could not make the queue file"
-            exit 1
-        fi
-    fi
-    # check file, if not exist make one
-    if [ ! -e "$queue_file" ] ; then
-        touch "$queue_file"
-    fi
-    if [ ! -w "$queue_file" ] ; then
-        FATAL "cannot write to $queue_file"
-        exit 1
-    fi
-    if $clear_queue; then # clearing the queue file
-        echo -n "" > $queue_file
-    fi
-}
-function queue_add() {
-    # @description add values to the queue
-    # @param $1 the queue name
-    # @param $2 the queue data
-    local readonly queue_name_prefix="queue_"
-    local queue_name=${1:-}
-    shift
-    local queue_data=${@:-}
-    if [ -z "$queue_name" ]; then
-        FATAL "missing queue name"
-        exit 1
-    fi
-    local queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
-    queue_init $queue_name # make sure that the queue exists
-    DEBUG "queue data: '${queue_data}'"
-    DEBUG "queue name: $queue_file"
-    echo "${queue_data}" >> $queue_file # append data to file
-}
-function queue_read() {
-    # @description read value from the queue on a fifo basis
-    # @param $1 the queue name
-    # @return returns the 'queue_data'
-    local readonly queue_name_prefix="queue_"
-    local queue_name=${1:-}
-    local queue_data=""
-    if [ -z "$queue_name" ]; then
-        FATAL "missing queue name"
-        exit 1
-    fi
-    local queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
-    queue_init "${queue_name}" # make sure that the queue exists
-    queue_data=$(head -n 1 "${queue_file}") || true # get first line of file
-    sed -i 1d $queue_file || true # remove first line of file
-    echo "${queue_data}"
-}
-function queue_size() {
-    # @description returns the size of a queue
-    # @param $1 the queue name
-    # @return returns the size of a queue
-    local readonly queue_name_prefix="queue_"
-    local queue_name=${1:-}
-    local queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
-    local num_of_lines=0
-    num_of_lines=$(wc -l < "${queue_file}")
-    echo ${num_of_lines}
-}
-function queue_look_sl() {
-    # @description look in queue (single line)
-    # @param $1 the queue name
-    # @return returns the queue as a string with spaces
-    local readonly queue_name_prefix="queue_"
-    local queue_name=${1:-}
-    local queue_file="${QUEUE_STORAGE}/${queue_name_prefix}${queue_name}"
-    local queue=""
-    queue=$(tr '\n' ' ' < "${queue_file}")
-    echo "${queue}"
-}
-#############################
-# mutex interface
-#############################
-# use and manage a simple mutex implementation
-# via a local file system
-# - lock 'mutex name' [returns 1(succeeded) or 0(failed)]
-# - free 'mutex name'
-function mutex_lock() {
-    # @description locks a mutex
-    # if no mutex exists, one will be made
-    # @param $1 the mutex name
-    # @return returns status: true/1(succeeded) or false/0(failed)
-    local mutex_name=${1:-}
-    local readonly mutex_name_prefix="mutex_"
-    local readonly LOCK_FD=200
-    if [ -z "$mutex_name" ]; then
-        return 0 # missing mutex name
-    fi
-    #local prefix=`basename $0`
-    #prefix+="_$mutex_name"
-    local fd=${2:-$LOCK_FD}
-    local mutex_file="${LOCKFILE_DIR}/${mutex_name_prefix}${mutex_name}"
-    # create lock file
-    mkdir -p "$(dirname "${mutex_file}")" || return 0
-    touch "${mutex_file}"
-    eval "exec $fd>$mutex_file"
-
-    # acquier the lock
-    flock -n $fd \
-        && return 0 \
-        || return 1
-}
-function mutex_free() {
-    # @description frees a mutex
-    # use this when you have the mutex
-    # of the to be freed mutex
-    # @param $1 the mutex name
-    local mutex_name=${1:-}
-    local readonly mutex_name_prefix="mutex_"
-    if [ -z "$mutex_name" ]; then
-        return 0 # missing mutex name
-    fi
-    local mutex_file="${LOCKFILE_DIR}/${mutex_name_prefix}${mutex_name}"
-    if [ -e "$mutex_file" ]; then
-        rm $mutex_file
-    fi
-}
-
-#############################
-# start concurrent processes
-#############################
-function processes_start() {
-    # @description start a multiple of concurrent processes and store their PIDs
-    # @param $1 function to start
-    # @param $2 number of times to start this process
-    # @param $3 identifier of these processes (used to make a queue for the PIDs)
-    local function="${1:-}"
-    local jobs=${2:-"1"}
-    local identifier=${3:-"${function}"}
-    local queue_name="${identifier:-"default"}"
-    local pid=""
-    DEBUG "function: ${function}"
-    DEBUG "jobs: ${jobs}"
-    DEBUG "id: ${identifier}"
-    DEBUG "queue name: ${queue_name}"
-    queue_init "${queue_name}" true
-    if [ ! -z "${function}" ]; then
-        for (( i = 0; i < ${jobs}; i++ )); do
-            $function& # start new process
-            pid=$!
-            queue_add ${queue_name} ${pid} # add pid to queue
-        done
-    fi
-}
-function processes_signal() {
-    # @description send a kill signal to a multiple of concurrent processes
-    # uses a queue file with all the PIDs in a queue
-    # @param $1 identifier of these processes (used to make a queue for the PIDs)
-    # @param $2 signal (a signal used by the `kill` command) eg. SIGKILL, SIGTERM
-    local identifier=${1:-}
-    local signal=${2:-"SIGINT"}
-    local queue_name="${identifier:-"default"}"
-    #pid=""
-    pid=$(queue_read ${queue_name})
-    while [ ! -z "${pid}" ]; do
-        # check if pid exists
-        if [ -n "$(ps -p $pid -o pid=)" ]; then
-           kill -${signal} $pid || true
-           DEBUG "signaled process with PID: ${pid}"
-        fi
-        pid=$(queue_read ${queue_name})
-    done
-}
-
-#############################
-# global value storage
-#############################
-function value_set() {
-    # @description store the value of a variable on the local file system
-    # @param $1 variable name
-    # @param $2 variable value
-    local var_name=${1:-}
-    shift
-    local var_value=${@:-}
-    local readonly var_name_prefix="variable_"
-    if [ -z "${var_name}" ]; then
-        ERROR "missing variable name"
-        return 1
-    fi
-    if [ -z "${var_value}" ]; then
-        ERROR "missing variable value"
-        return 1
-    fi
-    local var_file="${VARIABLE_STORAGE}/${var_name_prefix}${var_name}"
-    # make directory
-    if [ ! -d "${VARIABLE_STORAGE}" ]; then
-        mkdir -p "${VARIABLE_STORAGE}"
-        if [ $? -ne 0 ] ; then
-            FATAL "could not make the variable value file"
-            exit 1
-        fi
-    fi
-    # make file
-    if [ ! -e "$var_file" ] ; then
-        touch "$var_file"
-    fi
-    if [ ! -w "$var_file" ] ; then
-        FATAL "cannot write to $var_file"
-        exit 1
-    fi
-    echo "${var_value}" > "${var_file}" # write value in file
-}
-function value_get() {
-    # @description get the value of a variable on the local file system
-    # @param $1 variable name
-    # @return returns the requested variable value via a echo
-    local var_name=${1:-}
-    local var_value=""
-    local readonly var_name_prefix="variable_"
-    if [ -z "${var_name}" ]; then
-        ERROR "missing variable name"
-        return 1
-    fi
-    local var_file="${VARIABLE_STORAGE}/${var_name_prefix}${var_name}"
-    if [ -e "${var_file}" ]; then
-        var_value=$(<${var_file})
-    fi
-    echo "${var_value}"
-}
-
-#############################
-# Find files
-#############################
-function find_files() {
-    # @description find all files and add them to a queue
-    # - find all the files matching the parameters
-    # - add them to a queue that will be cleared first
-    # @param $1 path to directory
-    # @param $2 filename(wildcards accepted)
-    # @param $3 filetypes(extensions)
-    # @param $4 queue name
-    # @param $5 ignore expression
-    local path=${1:-"./"}
-    local filename=${2:-}
-    set -f # temp disable expansion
-    # so that wildcards are accepted for the for loop
-    local filetypes=(${3:-})
-    set +f
-    local queue_name=${4:-}
-    local ignore=${5:-}
-    DEBUG "path: ${path}"
-    DEBUG "filename: ${filename}"
-    DEBUG "filetypes: ${filetypes[@]:-}"
-    DEBUG "queue name: ${queue_name}"
-    DEBUG "ignore: ${ignore}"
-    queue_init ${queue_name} true
-    for filetype in "${filetypes[@]:-}"; do
-        DEBUG "filetype: ${filetype}"
-        find "${path}" -type f -name "${filename}.${filetype}" -not -path "${ignore}" -print0 | while IFS= read -r -d '' file; do
-             queue_add "${queue_name}" "$file"
-             DEBUG "file $file"
-        done
-    done
-}
-
 #############################
 # error printing
 #############################
