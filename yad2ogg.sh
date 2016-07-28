@@ -488,9 +488,9 @@ function process_convert() {
                 fi
                 # check overwrite
                 if [ "${OVERWRITE_EXISTING}" = true ] ; then
-                    convert_command+=" -y"
+                    convert_command="echo \"y\" | ${convert_command}"
                 else
-                    convert_command+=" -n"
+                    convert_command="echo \"n\" | ${convert_command}"
                 fi
                 DEBUG "$PROCESS_PID| command: ${convert_command}"
                 convert_command+=" -loglevel error" # add log flag to command
