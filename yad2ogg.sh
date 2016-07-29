@@ -500,7 +500,8 @@ function process_convert() {
                 # check return code of process
                 if [ ! "${err_ret_code}" = 0 ] ; then
                     # command returned error
-                    if [[ "${err_ret_message}" =~ (^File .* already exists. Exiting.$) ]]; then
+                    if [[ "${err_ret_message}" =~ (^File .* already exists. Exiting.$) ]] || \
+                       [[ "${err_ret_message}" =~ (^File .* already exists. Overwrite \? \[y\/N] Not overwriting - exiting$) ]]; then
                         DEBUG "file already exists, skipping ${file}"
                     else
                         ERROR "error while processing: ${file}"
