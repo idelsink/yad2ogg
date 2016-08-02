@@ -783,6 +783,7 @@ function ctrl_c() {
     DEBUG "** Trapped CTRL-C"
     INFO "requested termination"
     processes_signal ${CONVERTER_PROCESSES_QUEUE} 'SIGINT'
+    kill -SIGTERM "${GUI_PID}"      # stop GUI
     wait || true                # wait for all child processes to finish
     exit 1
 }
