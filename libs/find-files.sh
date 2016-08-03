@@ -43,9 +43,11 @@ function find_files() {
     queue_init ${queue_name} true
     for filetype in "${filetypes[@]:-}"; do
         DEBUG "filetype: ${filetype}"
-        find "${path}" -type f -name "${filename}.${filetype}" -not -path "${ignore}" -print0 | while IFS= read -r -d '' file; do
-             queue_add "${queue_name}" "$file"
-             DEBUG "file $file"
-        done
+        if [ ! -z "${filetype}" ]; then
+            find "${path}" -type f -name "${filename}.${filetype}" -not -path "${ignore}" -print0 | while IFS= read -r -d '' file; do
+                 queue_add "${queue_name}" "$file"
+                 DEBUG "file $file"
+            done
+        fi
     done
 }
