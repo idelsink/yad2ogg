@@ -352,8 +352,10 @@ This tool was tested on the following systems.
 -   *Ubuntu 12 LTS*: ffmpeg was not supported anymore. **Not recommended**
 -   *Ubuntu 14 LTS*: Doesn't work out of the box. **See below**
 -   *Debian 7*: ffmpeg was not supported anymore. **Not recommended**
--   *Debian 8*: Doesn't work out of the box. **See below**
+-   *Debian 8*: Doesn't work out of the box. **missing ffmpeg, see below**
 -   *Fedora 23*: All works fine after installing the dependencies.
+-   *Fedora 24*: All works fine after installing the dependencies.
+-   *Centos 7*: All works fine after installing the dependencies.
 
 ### For Ubuntu 14 LTS
 
@@ -371,14 +373,10 @@ sudo apt-get update
 sudo apt-get install ffmpeg
 ```
 
-### For Debian 8
+### When ffmpeg is not available
 
-`ffmpeg` is not available by default.
-This can be fixed by either installing `ffmpeg` from another repo
-or to build it from source.
-Another option is to install `avconv`(libav) and use `avconv` as default.
-
-Use the following command:
+If `ffmpeg` is not available by default and `avconv` is available,
+The following can be used:
 
 ```sh
 -C 'avconv'
