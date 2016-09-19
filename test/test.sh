@@ -13,7 +13,7 @@ set -e          # kill script if a command fails
 set -o nounset  # unset values give error
 set -o pipefail # prevents errors in a pipeline from being masked
 
-SCRIPT_PATH=${0%/*}
+SCRIPT_PATH="$(dirname $( realpath ${BASH_SOURCE[0]} ) )"
 
 INPUT_DIR="${SCRIPT_PATH}/input"
 OUTPUT_DIR="${SCRIPT_PATH}/output"

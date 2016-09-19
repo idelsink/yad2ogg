@@ -38,7 +38,7 @@ set -e          # kill script if a command fails
 set -o nounset  # unset values give error
 set -o pipefail # prevents errors in a pipeline from being masked
 # --- include files -------------------------------------------------
-SCRIPT_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SCRIPT_PATH="$(dirname $( realpath ${BASH_SOURCE[0]} ) )"
 SCRIPT_PATH_LOCAL="${SCRIPT_PATH}"
 LIBS_PATH="${SCRIPT_PATH}/libs"
 LIBS_PATH_LOCAL="${SCRIPT_PATH}"
