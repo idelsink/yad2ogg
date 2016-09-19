@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #########################################################################
 # Script Name: test.sh
 # Script Version: 0.0.1

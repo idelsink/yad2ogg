@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #########################################################################
 # Script Name: yad2ogg_gen_test_files
 # Script Version: 0.0.1
