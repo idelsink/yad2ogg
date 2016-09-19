@@ -549,8 +549,12 @@ function process_gui() {
     local percentage=0
     local gui_update="0.5" #sec
     local term_update="10" #sec
-    local terminal_width=$(tput cols) || true
-    terminal_width=$(((${terminal_width:-200} / 10)*8)) # about 80%
+    local terminal_cols=0
+    local old_terminal_cols=0
+    local terminal_lines=0
+    local old_terminal_lines=0
+    local terminal_width=0
+    local terminal_height=0
     export DIALOGRC="${SCRIPT_PATH_LOCAL}/.dialogrc" # export rc file
     start_time=$(date +%s)
     value_set "${PROCESS_PID}_TERMINATE" "false" # set default value
@@ -563,6 +567,16 @@ function process_gui() {
     trap 'error ${LINENO}' ERR # on error, print error
     DEBUG "start GUI"
     while true; do
+        old_terminal_cols=$terminal_cols
+        terminal_cols=$(tput cols) || true
+        old_terminal_lines=$terminal_lines
+        terminal_lines=$(tput lines) || true
+        if [ "$terminal_lines" -ne "$old_terminal_lines" ]; then
+            terminal_height=$(((${terminal_lines:-200} / 10)*9)) # about 90%
+        fi
+        if [ "$terminal_cols" -ne "$old_terminal_cols" ]; then
+            terminal_width=$(((${terminal_cols:-200} / 10)*9)) # about 90%
+        fi
         title=$(value_get "${GUI_TITLE}") || true
         totalcount=$(value_get "${GUI_TOTAL_COUNT}") || true
         partcount=$(value_get "${GUI_PART_COUNT}") || true
@@ -606,7 +620,7 @@ function process_gui() {
                 message+="${notifications[3]:-}\n"
                 message+="\n"
                 message+="\ZbElapsed time since start: $elapsed_time\Zn"
-                echo $percentage  | dialog --colors --title "${title}" --gauge "${message}" 14 ${terminal_width:-100} 0
+                echo $percentage  | dialog --colors --title "${title}" --gauge "${message}" ${terminal_height:-14} ${terminal_width:-100} 0
                 sleep $gui_update || true
             else
                 sleep $term_update || true
@@ -623,7 +637,7 @@ function process_gui() {
             end_time=$(date -d@$end_time '+%m/%d/%Y %H:%M:%S') || true
             message="\nStart time: $start_time\nEnd time:   $end_time\nTime taken: ${elapsed_time}"
             if [ "${USE_GUI}" = true ]; then
-                echo 100  | dialog --title "${APPNAME} is now done" --gauge "${message}" 14 ${terminal_width:-100} 0
+                echo 100  | dialog --title "${APPNAME} is now done" --gauge "${message}" ${terminal_height:-14} ${terminal_width:-100} 0
             fi
             NOTICE "${APPNAME} is now done"
             NOTICE "Start time: $start_time"
